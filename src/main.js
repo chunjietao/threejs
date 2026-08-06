@@ -10,7 +10,9 @@
  * - src/ui/bonePanel.js                  → UI：骨骼名称列表
  * - src/data/loadSwingPose3D.js          → 数据：解码 swing_pose3d.pb
  * - src/ui/jsonTreePanel.js              → UI：可折叠 JSON 树
- * - src/ui/jointPanel.js                 → UI：关节名称列表
+ * - src/ui/jointPanel.js                 → UI：关节列表（含骨骼映射）
+ * - src/features/jointBoneMap.js         → 功能：关节↔骨骼映射（供后续 pb 驱动）
+ * - src/features/jointBoneMapStorage.js  → 功能：映射 JSON 持久化 / 导入导出
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -21,6 +23,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
 import { loadSwingPose3D } from './data/loadSwingPose3D.js';
 import { createAnimationController } from './features/animationController.js';
+import { createJointBoneMap } from './features/jointBoneMap.js';
+import {
+    loadMappingFromStorage,
+    saveMappingToStorage,
+} from './features/jointBoneMapStorage.js';
 import { loadXbot } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
@@ -131,55 +138,105 @@ scene.add(floor);
 const clock = new THREE.Clock();
 /** @type {ReturnType<typeof createAnimationController> | null} */
 let animController = null;
+/** @type {ReturnType<typeof createJointBoneMap> | null} */
+let jointBoneMap = null;
 
-loadXbot(scene, {
+const xbotReady = loadXbot(scene, {
   onProgress(percent) {
     loading.textContent = `正在加载 Xbot... ${percent}%`;
   },
-})
-  .then(({ model, mixer, animations }) => {
-    loading.remove();
+}).then(({ model, mixer, animations }) => {
+  loading.remove();
 
-    // 收集并展示人物全部骨骼
-    const bones = collectBones(model);
-    createBonePanel(app, bones);
-    console.log(
-      '骨骼列表：',
-      bones.map((bone) => bone.name || '(unnamed)'),
-    );
+  const bones = collectBones(model);
+  console.log(
+    '骨骼列表：',
+    bones.map((bone) => bone.name || '(unnamed)'),
+  );
 
-    if (!mixer || animations.length === 0) {
-      console.warn('模型没有可用动画。');
-      return;
-    }
-
-    // 想知道模型自带哪些片段，可以打开这行看控制台
-    // console.log(animations.map((clip) => clip.name));
-
+  if (mixer && animations.length > 0) {
     animController = createAnimationController(mixer, animations);
     createAnimationPanel(app, animController);
-  })
-  .catch((error) => {
-    console.error('Xbot 模型加载失败：', error);
-    loading.textContent = '模型加载失败，请检查控制台。';
-    loading.classList.add('error');
-  });
+  } else {
+    console.warn('模型没有可用动画。');
+  }
 
-// 按 golf_pose3d.proto 解码 swing_pose3d.pb，joints 转为列表并展示
-loadSwingPose3D()
-  .then(({ data, joints }) => {
-    const frameCount = data.frames?.length ?? 0;
-    createJointPanel(app, joints);
-    createJsonTreePanel(app, {
-      title: `SwingPose3D（${frameCount} frames · ${joints.length} joints）`,
-      data,
-      defaultExpandDepth: 1,
+  return { model, bones };
+});
+
+const poseReady = loadSwingPose3D().then(({ data, joints }) => {
+  const frameCount = data.frames?.length ?? 0;
+  createJsonTreePanel(app, {
+    title: `SwingPose3D（${frameCount} frames · ${joints.length} joints）`,
+    data,
+    defaultExpandDepth: 1,
+  });
+  console.log('SwingPose3D joints：', joints);
+  console.log('SwingPose3D 已加载：', data);
+  return { data, joints };
+});
+
+// 模型骨骼 + pb 关节都就绪后，建立映射并做列表联动（供后续 pb 驱动动画）
+Promise.all([xbotReady, poseReady])
+  .then(([{ bones }, { joints }]) => {
+    const boneNames = bones.map((bone) => bone.name || '(unnamed)');
+    const savedMap = loadMappingFromStorage();
+    jointBoneMap = createJointBoneMap({
+      joints,
+      boneNames,
+      savedMap,
     });
-    console.log('SwingPose3D joints：', joints);
-    console.log('SwingPose3D 已加载：', data);
+
+    /** @type {ReturnType<typeof createBonePanel> | null} */
+    let bonePanel = null;
+    /** @type {ReturnType<typeof createJointPanel> | null} */
+    let jointPanel = null;
+
+    /** @param {{ joint: string | null, bone: string | null }} selection */
+    function focusPair({ joint, bone }) {
+      jointPanel?.setActive(joint);
+      bonePanel?.setActive(bone);
+    }
+
+    function syncLinkedHighlights(snapshot = jointBoneMap.getSnapshot()) {
+      jointPanel?.setLinked(snapshot.paired.map((pair) => pair.joint));
+      bonePanel?.setLinked(
+        snapshot.paired.map((pair) => pair.bone).filter(Boolean),
+      );
+      bonePanel?.setMappedJoints(snapshot.paired);
+      // 每次变更自动写成 JSON 存到 localStorage，刷新后直接恢复
+      saveMappingToStorage(snapshot.map);
+    }
+
+    bonePanel = createBonePanel(app, bones, {
+      onSelect(boneName) {
+        const joint = jointBoneMap.getJointForBone(boneName);
+        focusPair({ joint, bone: boneName });
+      },
+    });
+
+    jointPanel = createJointPanel(app, joints, {
+      mapping: jointBoneMap,
+      onSelect(jointName) {
+        const bone = jointBoneMap.getBoneForJoint(jointName) ?? null;
+        focusPair({ joint: jointName, bone });
+      },
+    });
+
+    jointBoneMap.subscribe(syncLinkedHighlights);
+    syncLinkedHighlights();
+
+    console.log(
+      savedMap ? '已从本地 JSON 恢复关节↔骨骼映射：' : '关节↔骨骼映射（默认）：',
+      jointBoneMap.getSnapshot(),
+    );
   })
   .catch((error) => {
-    console.error('SwingPose3D 加载失败：', error);
+    console.error('初始化失败：', error);
+    if (loading.isConnected) {
+      loading.textContent = '加载失败，请检查控制台。';
+      loading.classList.add('error');
+    }
   });
 
 // ============================================================

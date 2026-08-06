@@ -166,7 +166,7 @@ canvas {
   top: 20px;
   right: 20px;
   z-index: 2;
-  width: min(280px, calc(100vw - 40px));
+  width: min(320px, calc(100vw - 40px));
   max-height: calc(50vh - 30px);
   padding: 14px 12px 12px;
   overflow: hidden;
@@ -202,48 +202,69 @@ canvas {
   padding: 0;
   overflow-y: auto;
   list-style: none;
-  counter-reset: bone;
 }
 
 .bone-panel__item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: 8px;
+  align-items: center;
   padding: 6px 8px;
   border-radius: 8px;
-  counter-increment: bone;
   font-size: 12px;
-}
-
-.bone-panel__item::before {
-  content: counter(bone);
-  min-width: 1.6em;
-  color: rgb(244 247 251 / 35%);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  cursor: pointer;
 }
 
 .bone-panel__item:nth-child(odd) {
   background: rgb(255 255 255 / 4%);
 }
 
+.bone-panel__item.is-linked {
+  box-shadow: inset 3px 0 0 rgb(61 214 140 / 70%);
+}
+
+.bone-panel__item.is-linked .bone-panel__name {
+  color: #3dd68c;
+}
+
+.bone-panel__item.is-active {
+  background: rgb(106 168 255 / 28%);
+  box-shadow: inset 3px 0 0 #6aa8ff;
+}
+
+.bone-panel__item.is-active .bone-panel__name {
+  color: #9ecbff;
+}
+
+.bone-panel__joint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(244 247 251 / 35%);
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-align: right;
+}
+
+.bone-panel__joint.is-mapped {
+  color: #3dd68c;
+}
+
 .bone-panel__name {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #f4f7fb;
+  text-align: left;
 }
 
 .bone-panel__type {
-  flex-shrink: 0;
-  color: rgb(106 168 255 / 80%);
-  font-size: 10px;
+  display: none;
 }
 
-/* ---------- 关节列表面板 ---------- */
+/* ---------- 关节列表面板（含骨骼映射） ---------- */
 .joint-panel {
   position: fixed;
   top: calc(50vh + 10px);
@@ -251,7 +272,7 @@ canvas {
   z-index: 2;
   display: flex;
   flex-direction: column;
-  width: min(280px, calc(100vw - 40px));
+  width: min(320px, calc(100vw - 40px));
   max-height: calc(50vh - 30px);
   padding: 14px 12px 12px;
   overflow: hidden;
@@ -262,14 +283,52 @@ canvas {
   backdrop-filter: blur(14px);
 }
 
+.joint-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+
 .joint-panel__title {
-  margin: 0 0 10px;
+  margin: 0;
   padding: 0 4px;
   color: rgb(244 247 251 / 60%);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.joint-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.joint-panel__btn {
+  appearance: none;
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+  color: rgb(244 247 251 / 80%);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.joint-panel__btn:hover {
+  background: rgb(255 255 255 / 12%);
+}
+
+.joint-panel__status {
+  margin: 0 0 8px;
+  padding: 0 4px;
+  color: rgb(244 247 251 / 50%);
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -285,26 +344,66 @@ canvas {
   padding: 0;
   overflow-y: auto;
   list-style: none;
-  counter-reset: joint;
+  display: grid;
+  gap: 4px;
 }
 
 .joint-panel__item {
-  padding: 6px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 5px 6px;
   border-radius: 8px;
-  counter-increment: joint;
-  color: #f4f7fb;
-  font-size: 12px;
-}
-
-.joint-panel__item::before {
-  content: counter(joint) '. ';
-  color: rgb(244 247 251 / 35%);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
 }
 
 .joint-panel__item:nth-child(odd) {
   background: rgb(255 255 255 / 4%);
+}
+
+.joint-panel__item.is-linked {
+  box-shadow: inset 3px 0 0 rgb(61 214 140 / 70%);
+}
+
+.joint-panel__item.is-active {
+  background: rgb(106 168 255 / 28%);
+  box-shadow: inset 3px 0 0 #6aa8ff;
+}
+
+.joint-panel__name {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f4f7fb;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.joint-panel__item.is-linked .joint-panel__name {
+  color: #3dd68c;
+}
+
+.joint-panel__item.is-active .joint-panel__name {
+  color: #9ecbff;
+}
+
+.joint-panel__select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  background: rgb(13 17 23 / 90%);
+  color: #f4f7fb;
+  font: inherit;
+  font-size: 10px;
 }
 
 /* ---------- SwingPose3D 可折叠 JSON 面板 ---------- */
