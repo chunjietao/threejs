@@ -23,6 +23,43 @@ function getSwingPose3DType() {
 }
 
 /**
+ * 从 SwingPose3D 数据中收集全部唯一关节名（按名字排序）。
+ * @param {{ frames?: Array<{ joints?: Record<string, unknown> }> }} data
+ * @returns {string[]}
+ */
+export function collectJointNames(data) {
+  const names = new Set();
+  for (const frame of data.frames ?? []) {
+    for (const name of Object.keys(frame.joints ?? {})) {
+      names.add(name);
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * 把每帧的 joints map 转成列表：[{ name, position, confidence }, ...]
+ * @param {{ frames?: Array<{ joints?: Record<string, object>, [key: string]: unknown }> }} data
+ * @returns {object}
+ */
+export function withJointsAsList(data) {
+  const frames = (data.frames ?? []).map((frame) => {
+    const jointsMap = frame.joints ?? {};
+    const joints = Object.entries(jointsMap).map(([name, joint]) => ({
+      name,
+      ...joint,
+    }));
+    return { ...frame, joints };
+  });
+
+  return {
+    ...data,
+    frames,
+    joint_names: collectJointNames(data),
+  };
+}
+
+/**
  * 加载并解码 SwingPose3D 二进制数据。
  *
  * @param {object} [options]
@@ -30,6 +67,7 @@ function getSwingPose3DType() {
  * @returns {Promise<{
  *   message: protobuf.Message,
  *   data: object,
+ *   joints: string[],
  *   json: string,
  * }>}
  */
@@ -44,7 +82,7 @@ export async function loadSwingPose3D(options = {}) {
 
   const buffer = new Uint8Array(await response.arrayBuffer());
   const message = SwingPose3D.decode(buffer);
-  const data = SwingPose3D.toObject(message, {
+  const raw = SwingPose3D.toObject(message, {
     longs: String,
     enums: String,
     bytes: String,
@@ -54,9 +92,13 @@ export async function loadSwingPose3D(options = {}) {
     oneofs: true,
   });
 
+  const joints = collectJointNames(raw);
+  const data = withJointsAsList(raw);
+
   return {
     message,
     data,
+    joints,
     json: JSON.stringify(data, null, 2),
   };
 }

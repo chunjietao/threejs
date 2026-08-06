@@ -167,7 +167,7 @@ canvas {
   right: 20px;
   z-index: 2;
   width: min(280px, calc(100vw - 40px));
-  max-height: calc(100vh - 40px);
+  max-height: calc(50vh - 30px);
   padding: 14px 12px 12px;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 12%);
@@ -241,6 +241,70 @@ canvas {
   flex-shrink: 0;
   color: rgb(106 168 255 / 80%);
   font-size: 10px;
+}
+
+/* ---------- 关节列表面板 ---------- */
+.joint-panel {
+  position: fixed;
+  top: calc(50vh + 10px);
+  right: 20px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: min(280px, calc(100vw - 40px));
+  max-height: calc(50vh - 30px);
+  padding: 14px 12px 12px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: rgb(13 17 23 / 78%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(14px);
+}
+
+.joint-panel__title {
+  margin: 0 0 10px;
+  padding: 0 4px;
+  color: rgb(244 247 251 / 60%);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.joint-panel__empty {
+  margin: 0;
+  padding: 8px 4px;
+  color: rgb(244 247 251 / 55%);
+  font-size: 12px;
+}
+
+.joint-panel__list {
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  counter-reset: joint;
+}
+
+.joint-panel__item {
+  padding: 6px 8px;
+  border-radius: 8px;
+  counter-increment: joint;
+  color: #f4f7fb;
+  font-size: 12px;
+}
+
+.joint-panel__item::before {
+  content: counter(joint) '. ';
+  color: rgb(244 247 251 / 35%);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.joint-panel__item:nth-child(odd) {
+  background: rgb(255 255 255 / 4%);
 }
 
 /* ---------- SwingPose3D 可折叠 JSON 面板 ---------- */
@@ -413,7 +477,8 @@ canvas {
     overflow-y: auto;
   }
 
-  .bone-panel {
+  .bone-panel,
+  .joint-panel {
     display: none;
   }
 

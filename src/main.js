@@ -10,6 +10,7 @@
  * - src/ui/bonePanel.js                  → UI：骨骼名称列表
  * - src/data/loadSwingPose3D.js          → 数据：解码 swing_pose3d.pb
  * - src/ui/jsonTreePanel.js              → UI：可折叠 JSON 树
+ * - src/ui/jointPanel.js                 → UI：关节名称列表
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -23,6 +24,7 @@ import { createAnimationController } from './features/animationController.js';
 import { loadXbot } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
+import { createJointPanel } from './ui/jointPanel.js';
 import { createJsonTreePanel } from './ui/jsonTreePanel.js';
 
 // ============================================================
@@ -163,15 +165,17 @@ loadXbot(scene, {
     loading.classList.add('error');
   });
 
-// 按 golf_pose3d.proto 解码 swing_pose3d.pb，并以可折叠 JSON 展示
+// 按 golf_pose3d.proto 解码 swing_pose3d.pb，joints 转为列表并展示
 loadSwingPose3D()
-  .then(({ data }) => {
+  .then(({ data, joints }) => {
     const frameCount = data.frames?.length ?? 0;
+    createJointPanel(app, joints);
     createJsonTreePanel(app, {
-      title: `SwingPose3D（${frameCount} frames）`,
+      title: `SwingPose3D（${frameCount} frames · ${joints.length} joints）`,
       data,
       defaultExpandDepth: 1,
     });
+    console.log('SwingPose3D joints：', joints);
     console.log('SwingPose3D 已加载：', data);
   })
   .catch((error) => {
