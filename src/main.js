@@ -7,6 +7,7 @@
  * - src/models/loadXbot.js               → 功能：加载 Xbot 模型
  * - src/features/animationController.js  → 功能：切换 / 暂停 / 调速动画
  * - src/ui/animationPanel.js             → UI：动画控制面板
+ * - src/ui/bonePanel.js                  → UI：骨骼名称列表
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -18,6 +19,7 @@ import '../style.css';
 import { createAnimationController } from './features/animationController.js';
 import { loadXbot } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
+import { collectBones, createBonePanel } from './ui/bonePanel.js';
 
 // ============================================================
 // 第 1 步：拿到页面里的 DOM 节点
@@ -129,8 +131,16 @@ loadXbot(scene, {
     loading.textContent = `正在加载 Xbot... ${percent}%`;
   },
 })
-  .then(({ mixer, animations }) => {
+  .then(({ model, mixer, animations }) => {
     loading.remove();
+
+    // 收集并展示人物全部骨骼
+    const bones = collectBones(model);
+    createBonePanel(app, bones);
+    console.log(
+      '骨骼列表：',
+      bones.map((bone) => bone.name || '(unnamed)'),
+    );
 
     if (!mixer || animations.length === 0) {
       console.warn('模型没有可用动画。');
