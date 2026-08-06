@@ -1,0 +1,185 @@
+// Golf Swing 3D Pose · Protobuf 传输规范
+// Wire format for transferring reconstructed 3D pose sequences between devices.
+//
+// 数据来源：golf_swing_v2_fix 管线 build_sequence + compute_all 的输出。
+// Source: golf_swing_v2_fix pipeline (build_sequence + compute_all output).
+//
+// 典型大小：~5 KB per swing (18 joints × 68 frames × float).
+// Typical size: ~5 KB per swing.
+
+syntax = "proto3";
+
+package golf.pose;
+
+option java_package = "com.golf.pose.proto";
+option swift_prefix = "GP";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core geometry
+// ─────────────────────────────────────────────────────────────────────────────
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// Single joint with optional confidence from the 2D detector.
+message Joint3D {
+  Vec3 position = 1;
+  float confidence = 2;  // 0–1, from YOLO; 0 if unavailable.
+}
+
+// One frame of a swing sequence.
+message PoseFrame {
+  int32 frame_idx = 1;          // pair_NNN index from annotation filename
+  float timestamp_sec = 2;      // seconds from start of DTL recording
+
+  // Keyed by canonical joint name (see JointName enum).
+  map<string, Joint3D> joints = 3;
+
+  // Coordinate system tag for this frame's joint positions.
+  CoordSystem coord_system = 4;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full swing payload (primary message for device→device transfer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+message SwingPose3D {
+  // Ordered sequence of frames (address … follow-through).
+  repeated PoseFrame frames = 1;
+
+  // Key-moment frame indices (values of PoseFrame.frame_idx, NOT array index).
+  int32 address_frame_idx = 2;
+  int32 top_of_backswing_frame_idx = 3;
+  int32 impact_frame_idx = 4;
+
+  // Alignment metadata: rotation applied to raw triangulated coords.
+  // Receiver can invert this to recover camera-native coordinates.
+  RotationMatrix alignment_rotation = 5;
+
+  // Swing metrics computed by the pipeline.
+  SwingMetrics metrics = 6;
+
+  // Club speed / path prediction (optional).
+  ClubPrediction club_prediction = 7;
+
+  // Camera intrinsics used for triangulation (for re-projection if needed).
+  CameraIntrinsics camera_dtl = 8;
+  CameraIntrinsics camera_fo = 9;
+
+  // Extrinsics: FO relative to DTL.
+  CameraExtrinsics extrinsics = 10;
+
+  // Pipeline version tag.
+  string pipeline_version = 11;
+
+  // Unix timestamp (ms) when analysis was performed.
+  int64 analysis_timestamp_ms = 12;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metrics
+// ─────────────────────────────────────────────────────────────────────────────
+
+message SwingMetrics {
+  float shoulder_angle_atan2_deg = 1;
+  float shoulder_angle_spine_deg = 2;
+  float sway_pct = 3;
+  float spline_tilt_change_deg = 4;
+  float tempo_ratio = 5;
+  float head_movement_pct = 6;
+  float hip_forward_movement_pct = 7;
+  float weight_shift_approx = 8;
+
+  // Timestamps for key moments.
+  float address_timestamp_sec = 9;
+  float top_of_backswing_timestamp_sec = 10;
+  float impact_timestamp_sec = 11;
+}
+
+message ClubPrediction {
+  float predicted_club_speed_mph = 1;
+  float predicted_club_path_deg = 2;
+  string method = 3;                    // "angle" | "regression"
+  float trajectory_angle_deg = 4;
+  float max_pixel_speed = 5;
+  float fitting_loss = 6;
+  int32 num_points_used = 7;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Camera / geometry primitives
+// ─────────────────────────────────────────────────────────────────────────────
+
+message CameraIntrinsics {
+  float fx = 1;
+  float fy = 2;
+  float cx = 3;
+  float cy = 4;
+  int32 image_width = 5;
+  int32 image_height = 6;
+  // Distortion coefficients (k1, k2, p1, p2, k3). Empty if not used.
+  repeated float distortion = 7;
+}
+
+message CameraExtrinsics {
+  // 3×3 rotation matrix, row-major (9 floats).
+  repeated float rotation = 1;
+  // Translation vector (3 floats).
+  repeated float translation = 2;
+}
+
+message RotationMatrix {
+  // 3×3 matrix, row-major order.
+  repeated float values = 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum CoordSystem {
+  COORD_UNKNOWN = 0;
+  COORD_OPENCV_TRIANGULATE = 1;  // Raw triangulation (Y-flipped)
+  COORD_BODY_UP_ALIGNED = 2;     // After align_triangulated_sequence_to_body_up
+  COORD_FOOT_ALIGNED = 3;        // After foot_align (ankle→+X, club→-Z)
+  COORD_NORMALIZED = 4;          // Normalized to unit scale
+  COORD_ORTHOGONAL = 5;          // Fallback single-view depth estimate
+}
+
+// Canonical joint names — map keys in PoseFrame.joints use these strings.
+// Provided as enum for typed languages; wire format uses string keys for
+// forward-compatibility (new joints won't break old parsers).
+enum JointName {
+  JOINT_UNKNOWN = 0;
+  NOSE = 1;
+  LEFT_EAR = 2;
+  RIGHT_EAR = 3;
+  LEFT_SHOULDER = 4;
+  RIGHT_SHOULDER = 5;
+  LEFT_ELBOW = 6;
+  RIGHT_ELBOW = 7;
+  LEFT_WRIST = 8;
+  RIGHT_WRIST = 9;
+  LEFT_HIP = 10;
+  RIGHT_HIP = 11;
+  LEFT_KNEE = 12;
+  RIGHT_KNEE = 13;
+  LEFT_ANKLE = 14;
+  RIGHT_ANKLE = 15;
+  GOLF_SHAFT_TIP = 16;
+  CLUB_HEAD_TOE = 17;
+  GOLF_CLUB_SHAFT_HANDLE_TIP = 18;
+}
+
+// Skeleton connectivity (for rendering on receiver side).
+message SkeletonEdge {
+  JointName joint_a = 1;
+  JointName joint_b = 2;
+}
+
+message SkeletonTopology {
+  repeated SkeletonEdge edges = 1;
+}
