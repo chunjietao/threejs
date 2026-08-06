@@ -10,6 +10,7 @@
   },
   "type": "module",
   "dependencies": {
+    "protobufjs": "^8.7.1",
     "three": "^0.185.1",
     "vite": "^8.2.0"
   }

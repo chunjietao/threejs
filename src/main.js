@@ -8,6 +8,8 @@
  * - src/features/animationController.js  → 功能：切换 / 暂停 / 调速动画
  * - src/ui/animationPanel.js             → UI：动画控制面板
  * - src/ui/bonePanel.js                  → UI：骨骼名称列表
+ * - src/data/loadSwingPose3D.js          → 数据：解码 swing_pose3d.pb
+ * - src/ui/jsonTreePanel.js              → UI：可折叠 JSON 树
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -16,10 +18,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
+import { loadSwingPose3D } from './data/loadSwingPose3D.js';
 import { createAnimationController } from './features/animationController.js';
 import { loadXbot } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
+import { createJsonTreePanel } from './ui/jsonTreePanel.js';
 
 // ============================================================
 // 第 1 步：拿到页面里的 DOM 节点
@@ -157,6 +161,21 @@ loadXbot(scene, {
     console.error('Xbot 模型加载失败：', error);
     loading.textContent = '模型加载失败，请检查控制台。';
     loading.classList.add('error');
+  });
+
+// 按 golf_pose3d.proto 解码 swing_pose3d.pb，并以可折叠 JSON 展示
+loadSwingPose3D()
+  .then(({ data }) => {
+    const frameCount = data.frames?.length ?? 0;
+    createJsonTreePanel(app, {
+      title: `SwingPose3D（${frameCount} frames）`,
+      data,
+      defaultExpandDepth: 1,
+    });
+    console.log('SwingPose3D 已加载：', data);
+  })
+  .catch((error) => {
+    console.error('SwingPose3D 加载失败：', error);
   });
 
 // ============================================================
