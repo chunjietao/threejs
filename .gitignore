@@ -1,0 +1,5 @@
+# English: Ignore generated dependencies and build output.
+# 中文：忽略生成的依赖目录和构建产物。
+node_modules/
+dist/
+.DS_Store
