@@ -13,6 +13,7 @@
  * - src/ui/jointPanel.js                 → UI：关节列表（含骨骼映射）
  * - src/features/jointBoneMap.js         → 功能：关节↔骨骼映射（供后续 pb 驱动）
  * - src/features/jointBoneMapStorage.js  → 功能：映射 JSON 持久化 / 导入导出
+ * - src/features/boneHighlighter.js      → 功能：骨骼位置 3D 高亮标记
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -23,6 +24,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
 import { loadSwingPose3D } from './data/loadSwingPose3D.js';
 import { createAnimationController } from './features/animationController.js';
+import { createBoneHighlighter } from './features/boneHighlighter.js';
 import { createJointBoneMap } from './features/jointBoneMap.js';
 import {
     loadMappingFromStorage,
@@ -140,6 +142,8 @@ const clock = new THREE.Clock();
 let animController = null;
 /** @type {ReturnType<typeof createJointBoneMap> | null} */
 let jointBoneMap = null;
+/** @type {ReturnType<typeof createBoneHighlighter> | null} */
+let boneHighlighter = null;
 
 const xbotReady = loadXbot(scene, {
   onProgress(percent) {
@@ -186,16 +190,42 @@ Promise.all([xbotReady, poseReady])
       boneNames,
       savedMap,
     });
+    boneHighlighter = createBoneHighlighter(scene, bones);
 
     /** @type {ReturnType<typeof createBonePanel> | null} */
     let bonePanel = null;
     /** @type {ReturnType<typeof createJointPanel> | null} */
     let jointPanel = null;
+    /** @type {string | null} */
+    let activeJoint = null;
+    /** @type {string | null} */
+    let activeBone = null;
 
     /** @param {{ joint: string | null, bone: string | null }} selection */
     function focusPair({ joint, bone }) {
+      activeJoint = joint;
+      activeBone = bone;
       jointPanel?.setActive(joint);
       bonePanel?.setActive(bone);
+      if (bone) {
+        boneHighlighter?.setActive(bone);
+        bonePanel?.setEyeVisible(bone, true);
+      }
+    }
+
+    /** 再次点击同一项时取消高亮 */
+    function unfocusBone(boneName) {
+      if (boneName) {
+        boneHighlighter?.setVisible(boneName, false);
+        bonePanel?.setEyeVisible(boneName, false);
+      }
+      if (boneHighlighter?.getActive() === boneName) {
+        boneHighlighter?.setActive(null);
+      }
+      activeJoint = null;
+      activeBone = null;
+      bonePanel?.setActive(null);
+      jointPanel?.setActive(null);
     }
 
     function syncLinkedHighlights(snapshot = jointBoneMap.getSnapshot()) {
@@ -209,9 +239,34 @@ Promise.all([xbotReady, poseReady])
     }
 
     bonePanel = createBonePanel(app, bones, {
+      isVisible: (boneName) => boneHighlighter?.isVisible(boneName) ?? false,
       onSelect(boneName) {
+        if (activeBone === boneName && boneHighlighter?.isVisible(boneName)) {
+          unfocusBone(boneName);
+          return;
+        }
         const joint = jointBoneMap.getJointForBone(boneName);
         focusPair({ joint, bone: boneName });
+      },
+      onToggleVisible(boneName, visible) {
+        boneHighlighter?.setVisible(boneName, visible);
+        if (visible) {
+          const joint = jointBoneMap.getJointForBone(boneName);
+          focusPair({ joint, bone: boneName });
+        } else if (activeBone === boneName) {
+          activeJoint = null;
+          activeBone = null;
+          boneHighlighter?.setActive(null);
+          bonePanel?.setActive(null);
+          jointPanel?.setActive(null);
+        }
+      },
+      onClearHighlights() {
+        boneHighlighter?.clearAll();
+        bonePanel?.clearAllEyes();
+        activeJoint = null;
+        activeBone = null;
+        jointPanel?.setActive(null);
       },
     });
 
@@ -219,6 +274,10 @@ Promise.all([xbotReady, poseReady])
       mapping: jointBoneMap,
       onSelect(jointName) {
         const bone = jointBoneMap.getBoneForJoint(jointName) ?? null;
+        if (activeJoint === jointName) {
+          unfocusBone(bone);
+          return;
+        }
         focusPair({ joint: jointName, bone });
       },
     });
@@ -248,6 +307,7 @@ function animate() {
   requestAnimationFrame(animate); // 预约下一帧
   const delta = clock.getDelta();
   animController?.update(delta); // 推进当前动画
+  boneHighlighter?.update(); // 骨骼高亮点跟随骨骼世界坐标
   controls.update(); // 阻尼控制器需要每帧更新
   renderer.render(scene, camera); // ★ 真正把场景画出来
 }

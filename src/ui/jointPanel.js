@@ -1,11 +1,12 @@
 /**
- * English: Joint list panel with inline joint→bone mapping selects and highlight sync.
- * 中文：关节列表面板，行内直接选择对应骨骼；支持映射高亮、JSON 持久化与导入导出。
+ * English: Joint list panel with searchable joint→bone mapping picker and highlight sync.
+ * 中文：关节列表面板；映射通过可搜索弹框选择骨骼，并支持高亮与 JSON 持久化。
  */
 import {
     downloadMappingJson,
     pickMappingJsonFile,
 } from '../features/jointBoneMapStorage.js';
+import { createSearchableSelect } from './searchableSelect.js';
 
 /**
  * @param {HTMLElement} container
@@ -79,8 +80,8 @@ export function createJointPanel(container, joints, options = {}) {
 
   /** @type {Map<string, HTMLLIElement>} */
   const itemByName = new Map();
-  /** @type {Map<string, HTMLSelectElement>} */
-  const selectByJoint = new Map();
+  /** @type {Map<string, ReturnType<typeof createSearchableSelect>>} */
+  const pickerByJoint = new Map();
 
   if (joints.length === 0) {
     const empty = document.createElement('p');
@@ -95,6 +96,11 @@ export function createJointPanel(container, joints, options = {}) {
       clearHighlight: () => {},
     };
   }
+
+  const boneItems = (mapping?.boneNames ?? []).map((boneName) => ({
+    value: boneName,
+    label: boneName.replace(/^mixamorig:/, ''),
+  }));
 
   const list = document.createElement('ol');
   list.className = 'joint-panel__list';
@@ -113,29 +119,19 @@ export function createJointPanel(container, joints, options = {}) {
     item.appendChild(name);
 
     if (mapping) {
-      const select = document.createElement('select');
-      select.className = 'joint-panel__select';
-      select.setAttribute('aria-label', `${jointName} 对应骨骼`);
-
-      const noneOpt = document.createElement('option');
-      noneOpt.value = '';
-      noneOpt.textContent = '未映射';
-      select.appendChild(noneOpt);
-
-      for (const boneName of mapping.boneNames) {
-        const opt = document.createElement('option');
-        opt.value = boneName;
-        opt.textContent = boneName.replace(/^mixamorig:/, '');
-        select.appendChild(opt);
-      }
-
-      select.addEventListener('change', () => {
-        mapping.setMapping(jointName, select.value || null);
-        onSelect?.(jointName);
+      const picker = createSearchableSelect({
+        ariaLabel: `${jointName} 对应骨骼`,
+        items: boneItems,
+        emptyLabel: '未映射',
+        value: mapping.getBoneForJoint(jointName) ?? '',
+        onChange(value) {
+          mapping.setMapping(jointName, value || null);
+          onSelect?.(jointName);
+        },
       });
 
-      item.appendChild(select);
-      selectByJoint.set(jointName, select);
+      item.appendChild(picker.element);
+      pickerByJoint.set(jointName, picker);
     }
 
     list.appendChild(item);
@@ -171,8 +167,8 @@ export function createJointPanel(container, joints, options = {}) {
 
   function syncMapping(snapshot = mapping?.getSnapshot()) {
     if (!mapping || !snapshot) return;
-    for (const [joint, select] of selectByJoint) {
-      select.value = snapshot.map[joint] ?? '';
+    for (const [joint, picker] of pickerByJoint) {
+      picker.value = snapshot.map[joint] ?? '';
     }
     status.textContent = `已映射 ${snapshot.paired.length}/${snapshot.jointCount}`;
   }
