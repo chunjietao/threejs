@@ -18,8 +18,9 @@
  * - src/features/poseDriver.js           → 功能：pb 关节方向 → Mixamo 骨骼朝向驱动
  * - src/features/golfGrip.js             → 功能：手指骨骼写成高尔夫重叠握杆姿势
  * - src/features/club.js                 → 功能：用 pb 三关节画出高尔夫球杆
+ * - src/features/stickman.js             → 功能：用 pb 关节画火柴人（X 轴旁置）
  * - src/features/posePlayback.js         → 功能：姿势帧播放 / 循环 / scrub
- * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号
+ * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号 + 距离
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -39,6 +40,7 @@ import {
 } from './features/jointBoneMapStorage.js';
 import { createPoseDriver } from './features/poseDriver.js';
 import { createPosePlayback } from './features/posePlayback.js';
+import { createStickman } from './features/stickman.js';
 import { loadXbot, restoreBindPose } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
@@ -160,6 +162,8 @@ let poseDriver = null;
 let posePlayback = null;
 /** @type {ReturnType<typeof createClub> | null} */
 let club = null;
+/** @type {ReturnType<typeof createStickman> | null} */
+let stickman = null;
 /** pb 姿势驱动开启时，跳过 mixer 更新以免覆盖骨骼 */
 let poseDriveActive = false;
 
@@ -227,12 +231,18 @@ Promise.all([xbotReady, poseReady])
       data,
       mapping: jointBoneMap,
     });
-    club = createClub(scene, {
-      getJointPosition: (name) => poseDriver?.getJointPosition(name) ?? null,
-    });
+    const jointPos = (name) => poseDriver?.getJointPosition(name) ?? null;
+    club = createClub(scene, { getJointPosition: jointPos });
+    stickman = createStickman(scene, { getJointPosition: jointPos });
     posePlayback = createPosePlayback({ data, driver: poseDriver });
     club.update();
-    createPosePanel(app, posePlayback);
+    stickman.update();
+    createPosePanel(app, posePlayback, {
+      offsetX: stickman.getOffsetX(),
+      onOffsetXChange(x) {
+        stickman?.setOffsetX(x);
+      },
+    });
     poseDriveActive = true;
 
     /** @type {ReturnType<typeof createBonePanel> | null} */
@@ -361,6 +371,7 @@ function animate() {
     // pb 驱动时不跑 mixer，避免覆盖骨骼变换
     posePlayback?.update(delta);
     club?.update(); // 球杆三点跟随当前 pb 帧
+    stickman?.update(); // 火柴人与 GLB 同帧，仅 X 偏移
   } else {
     animController?.update(delta);
   }

@@ -169,7 +169,7 @@ canvas {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: min(480px, calc(100vw - 280px));
+  width: min(580px, calc(100vw - 280px));
   padding: 10px 14px;
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 14px;
@@ -222,6 +222,35 @@ canvas {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.pose-panel__distance {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: rgb(244 247 251 / 75%);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pose-panel__distance-input {
+  width: 4.2em;
+  margin: 0;
+  padding: 4px 6px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 6%);
+  color: #f4f7fb;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.pose-panel__distance-input:focus {
+  border-color: rgb(106 168 255 / 70%);
 }
 
 /* ---------- 骨骼列表面板 ---------- */
