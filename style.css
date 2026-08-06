@@ -59,3 +59,121 @@ canvas {
   font-size: 13px;
   pointer-events: none;
 }
+
+/* ---------- 动画控制面板 ---------- */
+.anim-panel {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 2;
+  width: min(320px, calc(100vw - 40px));
+  padding: 14px 16px 16px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: rgb(13 17 23 / 78%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(14px);
+}
+
+.anim-panel__title {
+  margin: 0 0 8px;
+  color: rgb(244 247 251 / 60%);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.anim-panel__title:not(:first-child) {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.anim-panel__clips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.anim-panel__clip,
+.anim-panel__action {
+  appearance: none;
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+  color: #f4f7fb;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.anim-panel__clip:hover,
+.anim-panel__action:hover {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.anim-panel__clip:active,
+.anim-panel__action:active {
+  transform: scale(0.97);
+}
+
+.anim-panel__clip.is-active {
+  border-color: rgb(106 168 255 / 70%);
+  background: rgb(106 168 255 / 28%);
+}
+
+.anim-panel__additives,
+.anim-panel__controls {
+  display: grid;
+  gap: 10px;
+}
+
+.anim-panel__slider {
+  display: grid;
+  gap: 5px;
+  color: rgb(244 247 251 / 72%);
+  font-size: 12px;
+}
+
+.anim-panel__slider-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.anim-panel__slider-value {
+  color: #f4f7fb;
+  font-variant-numeric: tabular-nums;
+}
+
+.anim-panel__slider input[type='range'] {
+  width: 100%;
+  accent-color: #6aa8ff;
+}
+
+@media (max-width: 640px) {
+  .hint {
+    bottom: auto;
+    top: 16px;
+    max-width: calc(100vw - 32px);
+    text-align: center;
+  }
+
+  .anim-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+}

@@ -1,11 +1,11 @@
 /**
- * English: Loads the Xbot GLB model, enables shadows, and starts its animation.
- * 中文：专门负责加载 Xbot GLB 模型、开启阴影并播放动画（与其它功能模块解耦）。
+ * English: Loads the Xbot GLB model and returns its scene graph plus animation clips.
+ * 中文：专门负责加载 Xbot GLB 模型并返回场景节点与动画片段（播放由动画模块负责）。
  *
  * 【为什么单独拆文件？】
  * - main.js 只管「场景怎么搭、怎么渲染」
  * - 本文件只管「Xbot 怎么加载」
- * - 以后加其它功能（比如姿态、UI、交互）可以再新建独立 js，互不混杂
+ * - 动画播放 / 切换交给 src/features/animationController.js
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -20,7 +20,11 @@ const DEFAULT_URL = '/models/Xbot.glb';
  * @param {object} [options]
  * @param {string} [options.url] - 模型路径，默认 /models/Xbot.glb
  * @param {(percent: number) => void} [options.onProgress] - 加载进度 0~100
- * @returns {Promise<{ model: THREE.Group, mixer: THREE.AnimationMixer | null }>}
+ * @returns {Promise<{
+ *   model: THREE.Group,
+ *   mixer: THREE.AnimationMixer | null,
+ *   animations: THREE.AnimationClip[],
+ * }>}
  */
 export function loadXbot(scene, options = {}) {
   const { url = DEFAULT_URL, onProgress } = options;
@@ -31,25 +35,23 @@ export function loadXbot(scene, options = {}) {
       url,
       // --- 加载成功 ---
       (gltf) => {
-        const model = gltf.scene; // gltf.scene 就是模型根节点
+        const model = gltf.scene;
+        const animations = gltf.animations ?? [];
 
         // 遍历模型里的每个子对象，给网格开启阴影
         model.traverse((object) => {
           if (object.isMesh) {
-            object.castShadow = true; // 投射阴影
-            object.receiveShadow = true; // 接收阴影
+            object.castShadow = true;
+            object.receiveShadow = true;
           }
         });
         scene.add(model);
 
-        // 如果模型自带动画，就播放第 1 个动画片段
-        let mixer = null;
-        if (gltf.animations.length > 0) {
-          mixer = new THREE.AnimationMixer(model);
-          mixer.clipAction(gltf.animations[0]).play();
-        }
+        // 只创建 mixer，不在这里 play —— 交给动画控制器统一管理
+        const mixer =
+          animations.length > 0 ? new THREE.AnimationMixer(model) : null;
 
-        resolve({ model, mixer });
+        resolve({ model, mixer, animations });
       },
       // --- 加载进度 ---
       (event) => {

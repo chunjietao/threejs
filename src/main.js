@@ -1,12 +1,12 @@
 /**
  * English: Application entry — builds the Three.js scene and render loop.
- * 中文：应用入口 —— 搭建 Three.js 场景与渲染循环；具体模型加载交给独立模块。
+ * 中文：应用入口 —— 搭建 Three.js 场景与渲染循环；模型加载与动画控制交给独立模块。
  *
  * 【目录约定（方便以后扩展）】
- * - src/main.js              → 入口：场景 / 相机 / 灯光 / 循环
- * - src/models/loadXbot.js   → 功能：加载 Xbot 模型
- * - 以后可继续加，例如：
- *   src/models/loadOther.js、src/ui/...、src/features/...
+ * - src/main.js                          → 入口：场景 / 相机 / 灯光 / 循环
+ * - src/models/loadXbot.js               → 功能：加载 Xbot 模型
+ * - src/features/animationController.js  → 功能：切换 / 暂停 / 调速动画
+ * - src/ui/animationPanel.js             → UI：动画控制面板
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -15,7 +15,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
+import { createAnimationController } from './features/animationController.js';
 import { loadXbot } from './models/loadXbot.js';
+import { createAnimationPanel } from './ui/animationPanel.js';
 
 // ============================================================
 // 第 1 步：拿到页面里的 DOM 节点
@@ -115,21 +117,31 @@ floor.receiveShadow = true; // 地面接收阴影
 scene.add(floor);
 
 // ============================================================
-// 第 8 步：调用「模型加载模块」加载 Xbot
-// 具体加载逻辑在 src/models/loadXbot.js，入口这里只负责调用和更新 UI。
-// Clock 用来计算帧间隔；mixer 等模型加载成功后再赋值。
+// 第 8 步：加载模型 → 创建动画控制器 → 挂上动画面板
+// Clock 用来计算帧间隔；动画由 animationController 统一推进。
 // ============================================================
 const clock = new THREE.Clock();
-let mixer;
+/** @type {ReturnType<typeof createAnimationController> | null} */
+let animController = null;
 
 loadXbot(scene, {
   onProgress(percent) {
     loading.textContent = `正在加载 Xbot... ${percent}%`;
   },
 })
-  .then(({ mixer: modelMixer }) => {
-    mixer = modelMixer;
+  .then(({ mixer, animations }) => {
     loading.remove();
+
+    if (!mixer || animations.length === 0) {
+      console.warn('模型没有可用动画。');
+      return;
+    }
+
+    // 想知道模型自带哪些片段，可以打开这行看控制台
+    // console.log(animations.map((clip) => clip.name));
+
+    animController = createAnimationController(mixer, animations);
+    createAnimationPanel(app, animController);
   })
   .catch((error) => {
     console.error('Xbot 模型加载失败：', error);
@@ -144,7 +156,8 @@ loadXbot(scene, {
 // ============================================================
 function animate() {
   requestAnimationFrame(animate); // 预约下一帧
-  mixer?.update(clock.getDelta()); // 推进模型动画（?. 表示 mixer 还不存在时跳过）
+  const delta = clock.getDelta();
+  animController?.update(delta); // 推进当前动画
   controls.update(); // 阻尼控制器需要每帧更新
   renderer.render(scene, camera); // ★ 真正把场景画出来
 }
