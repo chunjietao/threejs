@@ -68,7 +68,7 @@ export function createSearchableSelect({
   function labelOf(val) {
     if (!val) return emptyLabel;
     const hit = items.find((item) => item.value === val);
-    return hit?.label ?? val.replace(/^mixamorig:/, '');
+    return hit?.label ?? val.replace(/^mixamorig:?/, '');
   }
 
   function syncTrigger() {

@@ -1,7 +1,12 @@
 /**
  * English: Joint list panel with searchable joint→bone mapping picker and highlight sync.
  * 中文：关节列表面板；映射通过可搜索弹框选择骨骼，并支持高亮与 JSON 持久化。
+ *       球杆三关节旁显示与 3D 标记一致的色标。
  */
+import {
+    CLUB_JOINT_COLORS,
+    clubColorCss,
+} from '../features/club.js';
 import {
     downloadMappingJson,
     pickMappingJsonFile,
@@ -80,7 +85,7 @@ export function createJointPanel(container, joints, options = {}) {
 
   /** @type {Map<string, HTMLLIElement>} */
   const itemByName = new Map();
-  /** @type {Map<string, ReturnType<typeof createSearchableSelect>>} */
+  /** @type {Map<string, ReturnType<typeof createSearchableSelect>} */
   const pickerByJoint = new Map();
 
   if (joints.length === 0) {
@@ -99,7 +104,7 @@ export function createJointPanel(container, joints, options = {}) {
 
   const boneItems = (mapping?.boneNames ?? []).map((boneName) => ({
     value: boneName,
-    label: boneName.replace(/^mixamorig:/, ''),
+    label: boneName.replace(/^mixamorig:?/, ''),
   }));
 
   const list = document.createElement('ol');
@@ -113,8 +118,20 @@ export function createJointPanel(container, joints, options = {}) {
     const name = document.createElement('button');
     name.type = 'button';
     name.className = 'joint-panel__name';
-    name.textContent = jointName;
     name.addEventListener('click', () => onSelect?.(jointName));
+
+    const clubHex = CLUB_JOINT_COLORS[jointName];
+    if (clubHex != null) {
+      const swatch = document.createElement('span');
+      swatch.className = 'joint-panel__swatch';
+      swatch.style.background = clubColorCss(clubHex);
+      swatch.title = '球杆标记色';
+      swatch.setAttribute('aria-hidden', 'true');
+      name.append(swatch, document.createTextNode(jointName));
+      item.classList.add('is-club');
+    } else {
+      name.textContent = jointName;
+    }
 
     item.appendChild(name);
 

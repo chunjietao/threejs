@@ -149,9 +149,14 @@ export function createAnimationController(mixer, clips) {
 
   /** 用 mixer.timeScale 归零实现暂停，比逐个 action.paused 更稳妥 */
   function togglePause() {
-    paused = !paused;
-    mixer.timeScale = paused ? 0 : speed;
+    setPaused(!paused);
     return paused;
+  }
+
+  /** @param {boolean} value */
+  function setPaused(value) {
+    paused = Boolean(value);
+    mixer.timeScale = paused ? 0 : speed;
   }
 
   function update(delta) {
@@ -167,6 +172,7 @@ export function createAnimationController(mixer, clips) {
     setAdditiveWeight,
     setSpeed,
     togglePause,
+    setPaused,
     update,
   };
 }

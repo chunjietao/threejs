@@ -160,6 +160,70 @@ canvas {
   accent-color: #6aa8ff;
 }
 
+/* ---------- 姿势播放条（pb 驱动） ---------- */
+.pose-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(480px, calc(100vw - 280px));
+  padding: 10px 14px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 14px;
+  background: rgb(13 17 23 / 82%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+}
+
+.pose-panel__play {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 8%);
+  color: #f4f7fb;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.pose-panel__play:hover {
+  background: rgb(255 255 255 / 14%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.pose-panel__play.is-playing {
+  border-color: rgb(106 168 255 / 70%);
+  background: rgb(106 168 255 / 28%);
+}
+
+.pose-panel__slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #6aa8ff;
+  cursor: pointer;
+}
+
+.pose-panel__label {
+  flex: 0 0 auto;
+  min-width: 3.5em;
+  color: rgb(244 247 251 / 85%);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* ---------- 骨骼列表面板 ---------- */
 .bone-panel {
   position: fixed;
@@ -479,6 +543,18 @@ canvas {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.joint-panel__swatch {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
 }
 
 .joint-panel__item.is-linked .joint-panel__name {
@@ -772,10 +848,15 @@ canvas {
   .anim-panel {
     left: 12px;
     right: 12px;
-    bottom: 12px;
+    bottom: 64px;
     width: auto;
-    max-height: 35vh;
+    max-height: 30vh;
     overflow-y: auto;
+  }
+
+  .pose-panel {
+    bottom: 12px;
+    width: calc(100vw - 24px);
   }
 
   .bone-panel,

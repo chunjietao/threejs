@@ -11,9 +11,15 @@
  * - src/data/loadSwingPose3D.js          → 数据：解码 swing_pose3d.pb
  * - src/ui/jsonTreePanel.js              → UI：可折叠 JSON 树
  * - src/ui/jointPanel.js                 → UI：关节列表（含骨骼映射）
- * - src/features/jointBoneMap.js         → 功能：关节↔骨骼映射（供后续 pb 驱动）
+ * - src/features/jointBoneMap.js         → 功能：关节↔骨骼映射
  * - src/features/jointBoneMapStorage.js  → 功能：映射 JSON 持久化 / 导入导出
  * - src/features/boneHighlighter.js      → 功能：骨骼位置 3D 高亮标记
+ * - src/data/sanitizePose3D.js           → 数据：pb 关节轨迹清洗（剔坏帧 / 补洞 / 人体约束）
+ * - src/features/poseDriver.js           → 功能：pb 关节方向 → Mixamo 骨骼朝向驱动
+ * - src/features/golfGrip.js             → 功能：手指骨骼写成高尔夫重叠握杆姿势
+ * - src/features/club.js                 → 功能：用 pb 三关节画出高尔夫球杆
+ * - src/features/posePlayback.js         → 功能：姿势帧播放 / 循环 / scrub
+ * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -25,16 +31,20 @@ import '../style.css';
 import { loadSwingPose3D } from './data/loadSwingPose3D.js';
 import { createAnimationController } from './features/animationController.js';
 import { createBoneHighlighter } from './features/boneHighlighter.js';
+import { createClub } from './features/club.js';
 import { createJointBoneMap } from './features/jointBoneMap.js';
 import {
     loadMappingFromStorage,
     saveMappingToStorage,
 } from './features/jointBoneMapStorage.js';
-import { loadXbot } from './models/loadXbot.js';
+import { createPoseDriver } from './features/poseDriver.js';
+import { createPosePlayback } from './features/posePlayback.js';
+import { loadXbot, restoreBindPose } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
 import { createJointPanel } from './ui/jointPanel.js';
 import { createJsonTreePanel } from './ui/jsonTreePanel.js';
+import { createPosePanel } from './ui/posePanel.js';
 
 // ============================================================
 // 第 1 步：拿到页面里的 DOM 节点
@@ -144,12 +154,20 @@ let animController = null;
 let jointBoneMap = null;
 /** @type {ReturnType<typeof createBoneHighlighter> | null} */
 let boneHighlighter = null;
+/** @type {ReturnType<typeof createPoseDriver> | null} */
+let poseDriver = null;
+/** @type {ReturnType<typeof createPosePlayback> | null} */
+let posePlayback = null;
+/** @type {ReturnType<typeof createClub> | null} */
+let club = null;
+/** pb 姿势驱动开启时，跳过 mixer 更新以免覆盖骨骼 */
+let poseDriveActive = false;
 
 const xbotReady = loadXbot(scene, {
   onProgress(percent) {
     loading.textContent = `正在加载 Xbot... ${percent}%`;
   },
-}).then(({ model, mixer, animations }) => {
+}).then(({ model, mixer, animations, bindPose }) => {
   loading.remove();
 
   const bones = collectBones(model);
@@ -165,7 +183,7 @@ const xbotReady = loadXbot(scene, {
     console.warn('模型没有可用动画。');
   }
 
-  return { model, bones };
+  return { model, bones, bindPose };
 });
 
 const poseReady = loadSwingPose3D().then(({ data, joints }) => {
@@ -180,9 +198,9 @@ const poseReady = loadSwingPose3D().then(({ data, joints }) => {
   return { data, joints };
 });
 
-// 模型骨骼 + pb 关节都就绪后，建立映射并做列表联动（供后续 pb 驱动动画）
+// 模型骨骼 + pb 关节都就绪后：映射联动 + pb 姿势驱动
 Promise.all([xbotReady, poseReady])
-  .then(([{ bones }, { joints }]) => {
+  .then(([{ model, bones, bindPose }, { data, joints }]) => {
     const boneNames = bones.map((bone) => bone.name || '(unnamed)');
     const savedMap = loadMappingFromStorage();
     jointBoneMap = createJointBoneMap({
@@ -191,6 +209,31 @@ Promise.all([xbotReady, poseReady])
       savedMap,
     });
     boneHighlighter = createBoneHighlighter(scene, bones);
+
+    // pb 驱动：停掉内置 GLB 动画，避免 mixer 覆盖骨骼
+    if (animController) {
+      animController.switchBaseAction('None', 0);
+      for (const name of animController.additiveNames) {
+        animController.setAdditiveWeight(name, 0);
+      }
+      animController.setPaused(true);
+    }
+    // 恢复加载时的 bind（勿用 skeleton.pose：Armature 缩放会导致骨骼崩溃）
+    restoreBindPose(bindPose, model);
+
+    poseDriver = createPoseDriver({
+      model,
+      bones,
+      data,
+      mapping: jointBoneMap,
+    });
+    club = createClub(scene, {
+      getJointPosition: (name) => poseDriver?.getJointPosition(name) ?? null,
+    });
+    posePlayback = createPosePlayback({ data, driver: poseDriver });
+    club.update();
+    createPosePanel(app, posePlayback);
+    poseDriveActive = true;
 
     /** @type {ReturnType<typeof createBonePanel> | null} */
     let bonePanel = null;
@@ -282,13 +325,21 @@ Promise.all([xbotReady, poseReady])
       },
     });
 
-    jointBoneMap.subscribe(syncLinkedHighlights);
+    jointBoneMap.subscribe((snapshot) => {
+      syncLinkedHighlights(snapshot);
+      poseDriver?.onMappingChanged();
+      if (posePlayback) {
+        poseDriver?.applyFrame(posePlayback.getFrameIndex());
+      }
+    });
     syncLinkedHighlights();
 
     console.log(
       savedMap ? '已从本地 JSON 恢复关节↔骨骼映射：' : '关节↔骨骼映射（默认）：',
       jointBoneMap.getSnapshot(),
     );
+    console.log('PB 姿势驱动已启用，address 帧：', poseDriver.addressIndex);
+    console.log('PB 数据清洗结果：', poseDriver.sanitizeReport);
   })
   .catch((error) => {
     console.error('初始化失败：', error);
@@ -306,7 +357,13 @@ Promise.all([xbotReady, poseReady])
 function animate() {
   requestAnimationFrame(animate); // 预约下一帧
   const delta = clock.getDelta();
-  animController?.update(delta); // 推进当前动画
+  if (poseDriveActive) {
+    // pb 驱动时不跑 mixer，避免覆盖骨骼变换
+    posePlayback?.update(delta);
+    club?.update(); // 球杆三点跟随当前 pb 帧
+  } else {
+    animController?.update(delta);
+  }
   boneHighlighter?.update(); // 骨骼高亮点跟随骨骼世界坐标
   controls.update(); // 阻尼控制器需要每帧更新
   renderer.render(scene, camera); // ★ 真正把场景画出来

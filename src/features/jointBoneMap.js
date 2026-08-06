@@ -5,25 +5,25 @@
 
 /**
  * 高尔夫 Pose 关节名 → Mixamo 骨骼名的默认对应关系。
- * 球杆类关节暂无对应骨骼（null），后续可挂到手部或独立物体。
+ * 本仓库 Xbot.glb 骨骼名为 mixamorigHips（无冒号）；球杆类暂无对应。
  * @type {Record<string, string | null>}
  */
 export const DEFAULT_JOINT_TO_BONE = {
-  nose: 'mixamorig:Head',
-  left_ear: 'mixamorig:Head',
-  right_ear: 'mixamorig:Head',
-  left_shoulder: 'mixamorig:LeftArm',
-  right_shoulder: 'mixamorig:RightArm',
-  left_elbow: 'mixamorig:LeftForeArm',
-  right_elbow: 'mixamorig:RightForeArm',
-  left_wrist: 'mixamorig:LeftHand',
-  right_wrist: 'mixamorig:RightHand',
-  left_hip: 'mixamorig:LeftUpLeg',
-  right_hip: 'mixamorig:RightUpLeg',
-  left_knee: 'mixamorig:LeftLeg',
-  right_knee: 'mixamorig:RightLeg',
-  left_ankle: 'mixamorig:LeftFoot',
-  right_ankle: 'mixamorig:RightFoot',
+  nose: 'mixamorigHead',
+  left_ear: 'mixamorigHead',
+  right_ear: 'mixamorigHead',
+  left_shoulder: 'mixamorigLeftArm',
+  right_shoulder: 'mixamorigRightArm',
+  left_elbow: 'mixamorigLeftForeArm',
+  right_elbow: 'mixamorigRightForeArm',
+  left_wrist: 'mixamorigLeftHand',
+  right_wrist: 'mixamorigRightHand',
+  left_hip: 'mixamorigLeftUpLeg',
+  right_hip: 'mixamorigRightUpLeg',
+  left_knee: 'mixamorigLeftLeg',
+  right_knee: 'mixamorigRightLeg',
+  left_ankle: 'mixamorigLeftFoot',
+  right_ankle: 'mixamorigRightFoot',
   golf_shaft_tip: null,
   club_head_toe: null,
   golf_club_shaft_handle_tip: null,
@@ -92,8 +92,13 @@ export function createJointBoneMap({
    */
   function setMapping(joint, bone) {
     if (!jointToBone.has(joint)) return false;
-    if (bone !== null && !boneSet.has(bone)) return false;
-    jointToBone.set(joint, bone);
+    if (bone !== null) {
+      const normalized = normalizeBoneName(bone, boneSet);
+      if (!normalized) return false;
+      jointToBone.set(joint, normalized);
+    } else {
+      jointToBone.set(joint, null);
+    }
     notify();
     return true;
   }
@@ -112,7 +117,7 @@ export function createJointBoneMap({
         const bone = map[joint];
         jointToBone.set(
           joint,
-          bone && boneSet.has(bone) ? bone : null,
+          bone ? normalizeBoneName(bone, boneSet) : null,
         );
       } else if (replaceMissingWithNull) {
         jointToBone.set(joint, null);
@@ -137,10 +142,9 @@ export function createJointBoneMap({
   /** 恢复默认映射（仅保留模型里实际存在的骨骼） */
   function resetToDefaults() {
     for (const joint of joints) {
-      const preferred = defaults[joint] ?? null;
       jointToBone.set(
         joint,
-        preferred && boneSet.has(preferred) ? preferred : null,
+        normalizeBoneName(defaults[joint] ?? null, boneSet),
       );
     }
     notify();
@@ -176,6 +180,22 @@ export function createJointBoneMap({
 }
 
 /**
+ * 兼容 mixamorig:Head 与 mixamorigHead 两种命名。
+ * @param {string | null} bone
+ * @param {Set<string>} boneSet
+ * @returns {string | null}
+ */
+function normalizeBoneName(bone, boneSet) {
+  if (!bone) return null;
+  if (boneSet.has(bone)) return bone;
+  const noColon = bone.replace(':', '');
+  if (noColon !== bone && boneSet.has(noColon)) return noColon;
+  const withColon = bone.replace(/^(mixamorig)(?![:])/, '$1:');
+  if (withColon !== bone && boneSet.has(withColon)) return withColon;
+  return null;
+}
+
+/**
  * @param {string} joint
  * @param {Record<string, string | null>} defaults
  * @param {Record<string, string | null> | null} savedMap
@@ -184,10 +204,11 @@ export function createJointBoneMap({
 function resolveBone(joint, defaults, savedMap, boneSet) {
   if (savedMap && Object.prototype.hasOwnProperty.call(savedMap, joint)) {
     const saved = savedMap[joint];
-    if (saved && boneSet.has(saved)) return saved;
     if (saved === null || saved === '') return null;
+    const normalized = normalizeBoneName(saved, boneSet);
+    if (normalized) return normalized;
     // 已保存但骨骼名不存在：回退默认
   }
   const preferred = defaults[joint] ?? null;
-  return preferred && boneSet.has(preferred) ? preferred : null;
+  return normalizeBoneName(preferred, boneSet);
 }

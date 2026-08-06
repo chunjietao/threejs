@@ -96,7 +96,7 @@ export function createBonePanel(container, bones, options = {}) {
 
   for (const bone of bones) {
     const boneName = bone.name || '(unnamed)';
-    const shortName = boneName.replace(/^mixamorig:/, '');
+    const shortName = boneName.replace(/^mixamorig:?/, '');
     const item = document.createElement('li');
     item.className = 'bone-panel__item';
     item.dataset.bone = boneName;
