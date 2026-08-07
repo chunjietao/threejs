@@ -1,6 +1,6 @@
 /**
- * English: Bottom pose playback bar — play/pause, scrubber, frame label, stickman X offset.
- * 中文：底部姿势播放条 —— 播放/暂停、滑条定格、帧号文案，以及火柴人相对 GLB 的 X 轴距离。
+ * English: Bottom pose playback bar — play/pause, ±1 frame, scrubber, frame label, stickman X offset.
+ * 中文：底部姿势播放条 —— 播放/暂停、±1 帧、滑条定格、帧号文案，以及火柴人相对 GLB 的 X 轴距离。
  */
 
 /**
@@ -22,6 +22,28 @@ export function createPosePanel(container, playback, options = {}) {
   playBtn.addEventListener('click', () => {
     playback.toggle();
   });
+
+  /** @param {-1 | 1} delta */
+  function stepFrame(delta) {
+    playback.pause();
+    playback.setFrame(playback.getFrameIndex() + delta);
+  }
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'pose-panel__step';
+  prevBtn.textContent = '−';
+  prevBtn.setAttribute('aria-label', '上一帧');
+  prevBtn.title = '上一帧 (−1)';
+  prevBtn.addEventListener('click', () => stepFrame(-1));
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'pose-panel__step';
+  nextBtn.textContent = '+';
+  nextBtn.setAttribute('aria-label', '下一帧');
+  nextBtn.title = '下一帧 (+1)';
+  nextBtn.addEventListener('click', () => stepFrame(1));
 
   const slider = document.createElement('input');
   slider.type = 'range';
@@ -75,7 +97,7 @@ export function createPosePanel(container, playback, options = {}) {
   });
 
   distWrap.append(distText, distInput);
-  panel.append(playBtn, slider, label, distWrap);
+  panel.append(playBtn, prevBtn, slider, nextBtn, label, distWrap);
   container.appendChild(panel);
 
   function sync(snap = playback.getSnapshot()) {
@@ -83,6 +105,12 @@ export function createPosePanel(container, playback, options = {}) {
     playBtn.textContent = playing ? '⏸' : '▶';
     playBtn.setAttribute('aria-label', playing ? '暂停' : '播放');
     playBtn.classList.toggle('is-playing', playing);
+
+    const atStart = snap.frameCount === 0 || snap.frameIndex <= 0;
+    const atEnd =
+      snap.frameCount === 0 || snap.frameIndex >= snap.frameCount - 1;
+    prevBtn.disabled = atStart;
+    nextBtn.disabled = atEnd;
 
     if (document.activeElement !== slider) {
       slider.value = String(snap.frameIndex);

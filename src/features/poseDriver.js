@@ -1,31 +1,98 @@
 /**
- * English: Drives Mixamo bones from SwingPose3D joint positions via direction-only aiming.
- * 中文：用 pb 关节 3D 位置推方向（父关节→子关节），只改骨骼朝向来驱动 Xbot Mixamo 姿势。
+ * English: Drives Mixamo bones from SwingPose3D joints — direction aiming plus IK-angle roll fixes.
+ * 中文：用 pb 关节 3D 位置驱动 Xbot Mixamo 姿势 —— 骨骼朝向对准方向，再用 IK 解算角度补上滚转。
  *
  * 【为什么只用「方向」而不是「目标点」】
  * pb 关节和模型骨骼的位置永远不可能完全重合（体型、骨长都不同）。
  * 若用「骨骼当前世界位置 → pb 目标点」求朝向，误差会沿骨链累积，姿势会扭曲。
  * 正确做法：只取 pb 两个关节之间的**单位方向**，让骨骼朝这个方向即可，
  * 骨长完全由模型自己决定，人体比例就不会被拉坏。
+ *
+ * 【为什么只对准方向还不够 —— 要用 ikSolver 的角度补两处滚转】
+ * 「对准方向」求的是最小旋转，它只定死骨轴指向（2 自由度），
+ * 绕骨轴自身的滚转（第 3 自由度）是任意的。由此产生两个可见缺陷：
+ *
+ * 1) 躯干不会转身。脊柱三节都朝「髋中点→肩中点」，彼此共线且零扭转，
+ *    于是上半身始终跟着骨盆走；上杆顶点肩膀该转开 40° 以上时，
+ *    只能靠锁骨把肩点硬拽过去，肩背蒙皮被拉变形。
+ *    → 用 ikSolver 的 x_factor（肩髋分离角）把扭转分配到三节脊柱上。
+ *
+ * 2) 肘 / 膝的弯曲平面会乱翻。上臂滚转任意，意味着前臂相对上臂的弯曲
+ *    可能发生在「侧向折」的平面里，关节处蒙皮就会拧麻花。
+ *    → 用 ikSolver 给出的弯曲平面法线，把近端骨（上臂 / 大腿）绕自身骨轴
+ *      转到「弯曲轴与 bind 时解剖朝向一致」的滚转上。
  */
 import * as THREE from 'three';
+import {
+    applyMirror,
+    detectMirroredHandedness,
+    getJointRaw,
+} from '../data/mirrorPose3D.js';
 import { sanitizePose3D } from '../data/sanitizePose3D.js';
 import { applyGolfGrip } from './golfGrip.js';
+import { solvePoseAngles } from './ikSolver.js';
 
-/** 骨链朝向：bone 的骨轴对准 (from 关节 → to 关节) 的方向 */
-const LIMB_AIMS = [
-  { bone: 'mixamorigLeftArm', from: 'left_shoulder', to: 'left_elbow' },
-  { bone: 'mixamorigLeftForeArm', from: 'left_elbow', to: 'left_wrist' },
-  { bone: 'mixamorigRightArm', from: 'right_shoulder', to: 'right_elbow' },
-  { bone: 'mixamorigRightForeArm', from: 'right_elbow', to: 'right_wrist' },
-  { bone: 'mixamorigLeftUpLeg', from: 'left_hip', to: 'left_knee' },
-  { bone: 'mixamorigLeftLeg', from: 'left_knee', to: 'left_ankle' },
-  { bone: 'mixamorigRightUpLeg', from: 'right_hip', to: 'right_knee' },
-  { bone: 'mixamorigRightLeg', from: 'right_knee', to: 'right_ankle' },
+/**
+ * 四肢铰链骨链：近端骨对准 root→joint，远端骨对准 joint→tip，
+ * 中间插入一次滚转对齐，让弯曲发生在解剖学正确的平面里。
+ *
+ * bendForward 表示远端相对近端往人体「前方」折（肘）还是「后方」折（膝），
+ * bind 姿势下的弯曲轴据此确定 —— 这只依赖解剖事实，不依赖 Mixamo 轴向约定。
+ */
+const LIMB_CHAINS = [
+  {
+    proximalBone: 'mixamorigLeftArm',
+    distalBone: 'mixamorigLeftForeArm',
+    root: 'left_shoulder',
+    joint: 'left_elbow',
+    tip: 'left_wrist',
+    flexionId: 'left_elbow_flexion',
+    bendForward: true,
+  },
+  {
+    proximalBone: 'mixamorigRightArm',
+    distalBone: 'mixamorigRightForeArm',
+    root: 'right_shoulder',
+    joint: 'right_elbow',
+    tip: 'right_wrist',
+    flexionId: 'right_elbow_flexion',
+    bendForward: true,
+  },
+  {
+    proximalBone: 'mixamorigLeftUpLeg',
+    distalBone: 'mixamorigLeftLeg',
+    root: 'left_hip',
+    joint: 'left_knee',
+    tip: 'left_ankle',
+    flexionId: 'left_knee_flexion',
+    bendForward: false,
+  },
+  {
+    proximalBone: 'mixamorigRightUpLeg',
+    distalBone: 'mixamorigRightLeg',
+    root: 'right_hip',
+    joint: 'right_knee',
+    tip: 'right_ankle',
+    flexionId: 'right_knee_flexion',
+    bendForward: false,
+  },
 ];
 
 /** 脊柱链：整段一起朝「髋中点 → 肩中点」 */
 const SPINE_CHAIN = ['mixamorigSpine', 'mixamorigSpine1', 'mixamorigSpine2'];
+
+/**
+ * 肩髋分离角在脊柱各节上的分配比例（自下而上，和为 1）。
+ * 腰椎能转的角度远小于胸椎，所以越靠上分得越多。
+ */
+const SPINE_TWIST_WEIGHTS = [0.2, 0.35, 0.45];
+
+/**
+ * 弯曲角小于这个值时，弯曲平面法线由两条近乎共线的骨段叉乘得到，方向极不稳定，
+ * 此时不做滚转对齐；在 [MIN, MAX] 之间线性淡入，避免伸直/弯曲切换时滚转跳变。
+ */
+const ROLL_FADE_MIN_DEG = 10;
+const ROLL_FADE_MAX_DEG = 25;
 
 /** 落地判定用的脚部骨骼（取最低点贴地） */
 const GROUND_BONES = [
@@ -35,6 +102,31 @@ const GROUND_BONES = [
   'mixamorigRightFoot',
 ];
 
+/**
+ * pb 语义关节 → Mixamo 中该关节所在的骨骼起点。
+ * 耳、鼻在 Xbot 中没有独立骨骼，统一退化到 Head 起点；这仍能稳定定义颈部方向。
+ */
+const MODEL_JOINT_BONES = Object.freeze({
+  nose: 'mixamorigHead',
+  left_ear: 'mixamorigHead',
+  right_ear: 'mixamorigHead',
+  left_shoulder: 'mixamorigLeftArm',
+  right_shoulder: 'mixamorigRightArm',
+  left_elbow: 'mixamorigLeftForeArm',
+  right_elbow: 'mixamorigRightForeArm',
+  left_wrist: 'mixamorigLeftHand',
+  right_wrist: 'mixamorigRightHand',
+  left_hip: 'mixamorigLeftUpLeg',
+  right_hip: 'mixamorigRightUpLeg',
+  left_knee: 'mixamorigLeftLeg',
+  right_knee: 'mixamorigRightLeg',
+  left_ankle: 'mixamorigLeftFoot',
+  right_ankle: 'mixamorigRightFoot',
+});
+
+const DEG2RAD = Math.PI / 180;
+const RAD2DEG = 180 / Math.PI;
+
 const _dir = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
@@ -43,17 +135,86 @@ const _quatB = new THREE.Quaternion();
 const _mat = new THREE.Matrix4();
 
 /**
- * @param {object} frame
- * @param {string} name
- * @returns {{ x: number, y: number, z: number } | null}
+ * 取 v 垂直于 axis 的分量并归一化。
+ * @param {THREE.Vector3} v
+ * @param {THREE.Vector3} axis - 单位向量
+ * @returns {THREE.Vector3 | null} 分量太小时返回 null
  */
-function getJointRaw(frame, name) {
-  const joints = frame?.joints;
-  if (!joints) return null;
-  if (Array.isArray(joints)) {
-    return joints.find((j) => j.name === name)?.position ?? null;
+function projectOnPlane(v, axis) {
+  const out = v.clone().addScaledVector(axis, -v.dot(axis));
+  if (out.lengthSq() < 1e-10) return null;
+  return out.normalize();
+}
+
+/**
+ * 绕 axis 从 from 转到 to 的有符号角。
+ * @param {THREE.Vector3} from - 单位向量，垂直 axis
+ * @param {THREE.Vector3} to - 单位向量，垂直 axis
+ * @param {THREE.Vector3} axis - 单位向量
+ * @returns {number} 度
+ */
+function signedAngleDeg(from, to, axis) {
+  _tmp.crossVectors(from, to);
+  return Math.atan2(_tmp.dot(axis), from.dot(to)) * RAD2DEG;
+}
+
+/**
+ * 在 [min, max] 区间把权重从 0 线性淡入到 1。
+ * @param {number | null | undefined} value
+ * @param {number} min
+ * @param {number} max
+ * @returns {number} 0~1
+ */
+function fadeWeight(value, min, max) {
+  if (value == null || !Number.isFinite(value)) return 0;
+  if (value <= min) return 0;
+  if (value >= max) return 1;
+  return (value - min) / (max - min);
+}
+
+/**
+ * 采样 bind 姿势下各铰链关节的弯曲轴（存成近端骨的局部向量）。
+ *
+ * bind 是 T-pose，肘膝都伸直，无法直接从几何量出弯曲轴，
+ * 但解剖学给了定向：肘朝人体前方折、膝朝后方折。
+ * 于是弯曲轴 = 近端骨轴 × 折向，只用到「人体前方」这一个约定，
+ * 而它已经由 rest.bodyBasis 从模型自身量出来了。
+ *
+ * @param {Map<string, THREE.Bone>} boneByName
+ * @param {Map<string, THREE.Vector3>} restAxis
+ * @param {ReturnType<typeof sampleRestFrame>} rest
+ * @returns {Map<string, THREE.Vector3>}
+ */
+function sampleHingeAxes(boneByName, restAxis, rest) {
+  /** @type {Map<string, THREE.Vector3>} */
+  const axes = new Map();
+
+  const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(rest.bodyBasis);
+  if (forward.lengthSq() < 1e-12) return axes;
+  forward.normalize();
+
+  for (const chain of LIMB_CHAINS) {
+    const bone = boneByName.get(chain.proximalBone);
+    const localAxis = restAxis.get(chain.proximalBone);
+    if (!bone || !localAxis) continue;
+
+    const worldQuat = new THREE.Quaternion();
+    bone.getWorldQuaternion(worldQuat);
+    const boneDir = localAxis.clone().applyQuaternion(worldQuat).normalize();
+
+    const bendDir = chain.bendForward ? forward : forward.clone().negate();
+    const hinge = new THREE.Vector3().crossVectors(boneDir, bendDir);
+    if (hinge.lengthSq() < 1e-10) continue;
+    hinge.normalize();
+
+    // 存成局部量：运行时按骨骼当前朝向变换回世界即可
+    axes.set(
+      chain.proximalBone,
+      hinge.applyQuaternion(worldQuat.clone().invert()).normalize(),
+    );
   }
-  return joints[name]?.position ?? null;
+
+  return axes;
 }
 
 /**
@@ -111,6 +272,7 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
 
   model.updateMatrixWorld(true);
   const rest = sampleRestFrame(boneByName);
+  const hingeAxisLocal = sampleHingeAxes(boneByName, restAxis, rest);
 
   const frames = data.frames ?? [];
   const addressIdx = resolveAddressIndex(data);
@@ -139,6 +301,8 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
   let posed = new Map();
   /** 本帧 lockToGround 把角色整体下移的量（世界 Y）；球杆等非骨骼点也要减掉 */
   let groundDropY = 0;
+  /** @type {Record<string, number | null>} 本帧 IK 解算出的关节角度（度） */
+  let currentAngles = {};
 
   function resetToBind() {
     for (const [name, pose] of restLocal) {
@@ -202,6 +366,73 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
   }
 
   /**
+   * 在已有朝向的基础上，绕世界轴追加一个滚转。
+   *
+   * 世界空间的追加旋转 q 作用在骨骼上时，局部量应写成
+   * parentWorld⁻¹ · q · parentWorld · local；把 q 的轴先换算到父空间，
+   * 就等价于在父空间左乘一个绕该轴的旋转。
+   *
+   * @param {string} boneName
+   * @param {THREE.Vector3} worldAxis - 滚转轴（世界空间，不必归一）
+   * @param {number} deg
+   */
+  function rollAround(boneName, worldAxis, deg) {
+    const bone = boneByName.get(boneName);
+    if (!bone || !bone.parent) return;
+    if (!Number.isFinite(deg) || Math.abs(deg) < 1e-3) return;
+    if (worldAxis.lengthSq() < 1e-12) return;
+
+    bone.parent.getWorldQuaternion(_quat).invert();
+    _axis.copy(worldAxis).normalize().applyQuaternion(_quat).normalize();
+    _quatB.setFromAxisAngle(_axis, deg * DEG2RAD);
+    bone.quaternion.premultiply(_quatB);
+    bone.updateMatrixWorld(true);
+  }
+
+  /**
+   * 用 IK 解出的弯曲平面，修正近端骨（上臂 / 大腿）绕自身骨轴的滚转。
+   *
+   * 「对准方向」只定死骨轴指向，滚转是任意的；而铰链关节的弯曲轴
+   * 在近端骨的局部空间里必须是固定的那一根（bind 时已采样好）。
+   * 于是把该轴按当前骨骼朝向变换到世界，再绕骨轴转到与 pb 的弯曲平面法线重合。
+   *
+   * @param {(typeof LIMB_CHAINS)[number]} chain
+   * @param {THREE.Vector3 | null} root
+   * @param {THREE.Vector3 | null} vertex
+   * @param {THREE.Vector3 | null} tip
+   */
+  function alignHingeRoll(chain, root, vertex, tip) {
+    if (!root || !vertex || !tip) return;
+    const restHinge = hingeAxisLocal.get(chain.proximalBone);
+    const bone = boneByName.get(chain.proximalBone);
+    if (!restHinge || !bone) return;
+
+    // 弯曲太小时叉乘方向不可靠，按屈曲角淡入淡出
+    const flexion = currentAngles[chain.flexionId];
+    const weight = fadeWeight(flexion, ROLL_FADE_MIN_DEG, ROLL_FADE_MAX_DEG);
+    if (weight <= 0) return;
+
+    const boneAxis = vertex.clone().sub(root);
+    if (boneAxis.lengthSq() < 1e-12) return;
+    boneAxis.normalize();
+
+    // pb 的弯曲平面法线 = 近端骨段 × 远端骨段
+    const target = new THREE.Vector3()
+      .crossVectors(boneAxis, tip.clone().sub(vertex))
+      .normalize();
+
+    // 当前模型的弯曲轴（bind 局部轴 → 世界）
+    bone.getWorldQuaternion(_quat);
+    const current = restHinge.clone().applyQuaternion(_quat);
+
+    const a = projectOnPlane(current, boneAxis);
+    const b = projectOnPlane(target, boneAxis);
+    if (!a || !b) return;
+
+    rollAround(chain.proximalBone, boneAxis, signedAngleDeg(a, b, boneAxis) * weight);
+  }
+
+  /**
    * 应用指定数组下标的帧。
    * @param {number} frameIndex
    */
@@ -212,6 +443,9 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
     resetToBind();
     model.updateMatrixWorld(true);
     posed = posedFrames[i];
+
+    // 先解算本帧关节角度：脊柱扭转与四肢滚转都要用它
+    currentAngles = solvePoseAngles((name) => posed.get(name) ?? null).angles;
 
     const hipMid = mid('left_hip', 'right_hip');
     const shoulderMid = mid('left_shoulder', 'right_shoulder');
@@ -247,10 +481,16 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
       hips.updateMatrixWorld(true);
     }
 
-    // ---- 躯干：整段脊柱朝「髋中点 → 肩中点」 ----
+    // ---- 躯干：整段脊柱朝「髋中点 → 肩中点」，并按 x_factor 分配扭转 ----
+    // 骨盆朝向已由髋线定死，脊柱若不扭转，肩线就只能永远跟着骨盆走。
     if (hipMid && shoulderMid) {
       const spineDir = shoulderMid.clone().sub(hipMid);
-      for (const name of SPINE_CHAIN) aimAlong(name, spineDir);
+      const twist = currentAngles.x_factor ?? 0;
+      for (let s = 0; s < SPINE_CHAIN.length; s++) {
+        const name = SPINE_CHAIN[s];
+        aimAlong(name, spineDir);
+        rollAround(name, spineDir, twist * (SPINE_TWIST_WEIGHTS[s] ?? 0));
+      }
     }
 
     // ---- 锁骨：脊柱顶端 → 各自肩关节 ----
@@ -264,9 +504,15 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
       aimBetween('mixamorigHead', shoulderMid, headTop);
     }
 
-    // ---- 四肢：近端 → 远端 ----
-    for (const aim of LIMB_AIMS) {
-      aimBetween(aim.bone, joint(aim.from), joint(aim.to));
+    // ---- 四肢：近端骨对准 → 滚转对齐弯曲平面 → 远端骨对准 ----
+    // 滚转必须夹在两次对准之间：远端骨继承近端骨的旋转，先滚转才不会把它带歪。
+    for (const chain of LIMB_CHAINS) {
+      const root = joint(chain.root);
+      const vertex = joint(chain.joint);
+      const tip = joint(chain.tip);
+      aimBetween(chain.proximalBone, root, vertex);
+      alignHingeRoll(chain, root, vertex, tip);
+      aimBetween(chain.distalBone, vertex, tip);
     }
 
     // pb 没有手指关节：用预设重叠握杆姿势，替代 bind 的张开手掌。
@@ -316,6 +562,56 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
     return p.clone().setY(p.y - groundDropY);
   }
 
+  /**
+   * 读取 GLB 模型上与 pb 语义关节对应的真实世界坐标。
+   * 与 getJointPosition 不同，这里返回的是当前蒙皮骨架的位置，
+   * 用于把角度圆弧准确画在 GLB 的肩、肘、腕、髋、膝、踝上。
+   *
+   * @param {string} name
+   * @returns {THREE.Vector3 | null}
+   */
+  function getModelJointPosition(name) {
+    const boneName = MODEL_JOINT_BONES[name];
+    if (!boneName) return null;
+    const bone = boneByName.get(boneName);
+    if (!bone) return null;
+    return bone.getWorldPosition(new THREE.Vector3());
+  }
+
+  /**
+   * 生成画在 GLB 上的角度几何。
+   *
+   * 顶点和参考方向来自模型骨骼的真实世界坐标；Xbot 没有的球杆握把点
+   * 则回退到已对齐的 pb 坐标。弧度值强制使用驱动模型时的 currentAngles，
+   * 再在当前几何平面内重建目标边，保证 GLB 与火柴人显示的是同一份角度，
+   * 而不是因为模型骨长不同重新量出另一套数值。
+   *
+   * @returns {ReturnType<typeof solvePoseAngles>}
+   */
+  function getModelAngleGeometry() {
+    const solved = solvePoseAngles(
+      (name) => getModelJointPosition(name) ?? getJointPosition(name),
+    );
+
+    for (const arc of solved.arcs) {
+      const desired = currentAngles[arc.id];
+      if (desired == null || !Number.isFinite(desired)) continue;
+
+      // 保留模型当前弯曲平面的朝向，只把弧张角校正为 IK 的最终数值。
+      _axis.crossVectors(arc.refDir, arc.targetDir);
+      if (_axis.lengthSq() > 1e-10) {
+        _axis.normalize();
+        arc.targetDir
+          .copy(arc.refDir)
+          .applyAxisAngle(_axis, Math.abs(desired) * DEG2RAD)
+          .normalize();
+      }
+      arc.deg = Math.abs(desired);
+    }
+
+    return solved;
+  }
+
   return {
     frameCount: frames.length,
     addressIndex: addressIdx,
@@ -323,76 +619,14 @@ export function createPoseDriver({ model, bones, data, mapping: _mapping = null 
     sanitizeReport: report,
     applyFrame,
     getJointPosition,
+    getModelJointPosition,
+    getModelAngleGeometry,
+    /** 本帧 IK 解算出的关节角度（度），驱动骨骼时用的就是这一份 */
+    getCurrentAngles: () => currentAngles,
     resetToBind,
     /** 映射变更后仍按同一套语义骨链驱动；预留钩子 */
     onMappingChanged() {},
   };
-}
-
-/**
- * 判断 pb 用的是不是与 Three.js 相反的左手坐标系。
- *
- * 判据来自人体自身：右手坐标系下「前 = 左 × 上」恒成立。
- * 取 左 = 右髋→左髋、上 = 髋中点→肩中点，算出的前方若与解剖学前方
- * （耳中点→鼻尖）反向，说明整份数据是镜像的。
- *
- * 镜像是反射变换，无法用四元数表示，只靠绕 Y 的偏航永远修不好 ——
- * 髋部左右能对上，但身体前后会整个翻过来，手就跑到背后去了。
- *
- * @param {object[]} frames
- * @returns {boolean}
- */
-function detectMirroredHandedness(frames) {
-  let mirrored = 0;
-  let normal = 0;
-
-  for (const frame of frames) {
-    /** @param {string} name */
-    const at = (name) => {
-      const p = getJointRaw(frame, name);
-      return p ? new THREE.Vector3(p.x, p.y, p.z) : null;
-    };
-    /** @param {string} a @param {string} b */
-    const mid = (a, b) => {
-      const pa = at(a);
-      const pb = at(b);
-      return pa && pb ? pa.add(pb).multiplyScalar(0.5) : null;
-    };
-
-    const hipL = at('left_hip');
-    const hipR = at('right_hip');
-    const hipMid = mid('left_hip', 'right_hip');
-    const shoulderMid = mid('left_shoulder', 'right_shoulder');
-    const earMid = mid('left_ear', 'right_ear');
-    const nose = at('nose');
-    if (!hipL || !hipR || !hipMid || !shoulderMid || !earMid || !nose) continue;
-
-    const left = hipL.sub(hipR);
-    const up = shoulderMid.sub(hipMid);
-    if (left.lengthSq() < 1e-12 || up.lengthSq() < 1e-12) continue;
-
-    const forward = new THREE.Vector3().crossVectors(left.normalize(), up.normalize());
-    const anatomicalForward = nose.sub(earMid);
-    if (forward.lengthSq() < 1e-12 || anatomicalForward.lengthSq() < 1e-12) continue;
-
-    if (forward.dot(anatomicalForward) < 0) mirrored += 1;
-    else normal += 1;
-  }
-
-  return mirrored > normal;
-}
-
-/**
- * 左手系时翻转一个水平轴。选 X 还是 Z 只差一个 180° 偏航，
- * 而偏航随后会被 computeAlignment 一并对齐，所以取哪个都等价。
- *
- * @param {THREE.Vector3} v
- * @param {boolean} mirrored
- * @returns {THREE.Vector3} 就地修改并返回
- */
-function applyMirror(v, mirrored) {
-  if (mirrored) v.z = -v.z;
-  return v;
 }
 
 /**

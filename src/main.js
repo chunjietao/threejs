@@ -15,10 +15,13 @@
  * - src/features/jointBoneMapStorage.js  → 功能：映射 JSON 持久化 / 导入导出
  * - src/features/boneHighlighter.js      → 功能：骨骼位置 3D 高亮标记
  * - src/data/sanitizePose3D.js           → 数据：pb 关节轨迹清洗（剔坏帧 / 补洞 / 人体约束）
+ * - src/data/mirrorPose3D.js             → 数据：pb 左手系（镜像）判定与消除
  * - src/features/poseDriver.js           → 功能：pb 关节方向 → Mixamo 骨骼朝向驱动
  * - src/features/golfGrip.js             → 功能：手指骨骼写成高尔夫重叠握杆姿势
  * - src/features/club.js                 → 功能：用 pb 三关节画出高尔夫球杆
  * - src/features/stickman.js             → 功能：用 pb 关节画火柴人（X 轴旁置）
+ * - src/features/ikSolver.js             → 功能：逆向运动学，pb 关节位置 → 关节角度
+ * - src/features/angleOverlay.js         → 功能：关节角度以弧线 + 度数画在火柴人上
  * - src/features/posePlayback.js         → 功能：姿势帧播放 / 循环 / scrub
  * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号 + 距离
  *
@@ -30,9 +33,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
 import { loadSwingPose3D } from './data/loadSwingPose3D.js';
+import { createAngleOverlay } from './features/angleOverlay.js';
 import { createAnimationController } from './features/animationController.js';
 import { createBoneHighlighter } from './features/boneHighlighter.js';
 import { createClub } from './features/club.js';
+import { createIKSolver, solvePoseAngles } from './features/ikSolver.js';
 import { createJointBoneMap } from './features/jointBoneMap.js';
 import {
     loadMappingFromStorage,
@@ -164,6 +169,12 @@ let posePlayback = null;
 let club = null;
 /** @type {ReturnType<typeof createStickman> | null} */
 let stickman = null;
+/** @type {ReturnType<typeof createIKSolver> | null} */
+let ikSolver = null;
+/** @type {ReturnType<typeof createAngleOverlay> | null} */
+let stickmanAngleOverlay = null;
+/** @type {ReturnType<typeof createAngleOverlay> | null} */
+let glbAngleOverlay = null;
 /** pb 姿势驱动开启时，跳过 mixer 更新以免覆盖骨骼 */
 let poseDriveActive = false;
 
@@ -235,8 +246,24 @@ Promise.all([xbotReady, poseReady])
     club = createClub(scene, { getJointPosition: jointPos });
     stickman = createStickman(scene, { getJointPosition: jointPos });
     posePlayback = createPosePlayback({ data, driver: poseDriver });
+
+    // 逆向运动学：整段序列一次性解算好角度；实时弧线则按当前帧的模型空间坐标现算，
+    // 这样弧的顶点与火柴人骨架严格重合（角度本身不受刚体变换与缩放影响）。
+    ikSolver = createIKSolver({ data });
+    stickmanAngleOverlay = createAngleOverlay(stickman.root, {
+      solve: () => solvePoseAngles(jointPos),
+      name: 'StickmanAngleOverlay',
+    });
+    glbAngleOverlay = createAngleOverlay(scene, {
+      solve: () => poseDriver.getModelAngleGeometry(),
+      name: 'GlbAngleOverlay',
+      radius: 0.085,
+    });
+
     club.update();
     stickman.update();
+    stickmanAngleOverlay.update();
+    glbAngleOverlay.update();
     createPosePanel(app, posePlayback, {
       offsetX: stickman.getOffsetX(),
       onOffsetXChange(x) {
@@ -350,6 +377,11 @@ Promise.all([xbotReady, poseReady])
     );
     console.log('PB 姿势驱动已启用，address 帧：', poseDriver.addressIndex);
     console.log('PB 数据清洗结果：', poseDriver.sanitizeReport);
+    console.log('IK 关节角度定义：', ikSolver.definitions);
+    console.log(
+      'IK 关节角度（address 帧，单位：度）：',
+      ikSolver.getFrameAngles(poseDriver.addressIndex),
+    );
   })
   .catch((error) => {
     console.error('初始化失败：', error);
@@ -372,6 +404,8 @@ function animate() {
     posePlayback?.update(delta);
     club?.update(); // 球杆三点跟随当前 pb 帧
     stickman?.update(); // 火柴人与 GLB 同帧，仅 X 偏移
+    stickmanAngleOverlay?.update(); // 火柴人关节角度
+    glbAngleOverlay?.update(); // GLB 真实骨骼位置上的同一组关节角度
   } else {
     animController?.update(delta);
   }
