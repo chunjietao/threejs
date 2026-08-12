@@ -1,12 +1,15 @@
 /**
- * English: Loads and decodes swing_pose3d.pb using golf_pose3d.proto (SwingPose3D).
- * 中文：按 golf_pose3d.proto 中的 SwingPose3D 定义，加载并解码 swing_pose3d.pb。
+ * English: Decodes SwingPose3D .pb data (from URL or a user-picked File) via golf_pose3d.proto.
+ * 中文：按 golf_pose3d.proto 中的 SwingPose3D 定义解码 .pb 数据；
+ *       数据来源可以是 URL（示例文件）或用户本地选择的 File，不再在启动时自动加载。
  */
 import protobuf from 'protobufjs';
 import protoSrc from '../../protobuf/golf_pose3d.proto?raw';
 import pbUrl from '../../protobuf/swing_pose3d.pb?url';
 
-const DEFAULT_PB_URL = pbUrl;
+/** 项目内自带的示例 pb（仅在用户点击「加载示例」时才会真正请求） */
+export const SAMPLE_PB_URL = pbUrl;
+export const SAMPLE_PB_NAME = 'swing_pose3d.pb';
 
 /**
  * 解析 proto 并返回 SwingPose3D 类型。
@@ -60,27 +63,19 @@ export function withJointsAsList(data) {
 }
 
 /**
- * 加载并解码 SwingPose3D 二进制数据。
+ * 解码一段 SwingPose3D 二进制数据。
  *
- * @param {object} [options]
- * @param {string} [options.url] - .pb 文件路径，默认项目内 swing_pose3d.pb
- * @returns {Promise<{
+ * @param {ArrayBuffer | Uint8Array} bytes
+ * @returns {{
  *   message: protobuf.Message,
  *   data: object,
  *   joints: string[],
  *   json: string,
- * }>}
+ * }}
  */
-export async function loadSwingPose3D(options = {}) {
-  const { url = DEFAULT_PB_URL } = options;
+export function decodeSwingPose3D(bytes) {
   const SwingPose3D = getSwingPose3DType();
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`加载 ${url} 失败：HTTP ${response.status}`);
-  }
-
-  const buffer = new Uint8Array(await response.arrayBuffer());
+  const buffer = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const message = SwingPose3D.decode(buffer);
   const raw = SwingPose3D.toObject(message, {
     longs: String,
@@ -101,4 +96,32 @@ export async function loadSwingPose3D(options = {}) {
     joints,
     json: JSON.stringify(data, null, 2),
   };
+}
+
+/**
+ * 从 URL 加载并解码 SwingPose3D。
+ *
+ * @param {object} [options]
+ * @param {string} [options.url] - .pb 文件路径，默认项目内示例 swing_pose3d.pb
+ * @returns {Promise<ReturnType<typeof decodeSwingPose3D>>}
+ */
+export async function loadSwingPose3D(options = {}) {
+  const { url = SAMPLE_PB_URL } = options;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`加载 ${url} 失败：HTTP ${response.status}`);
+  }
+
+  return decodeSwingPose3D(await response.arrayBuffer());
+}
+
+/**
+ * 从用户选择的本地文件解码 SwingPose3D。
+ *
+ * @param {File} file
+ * @returns {Promise<ReturnType<typeof decodeSwingPose3D>>}
+ */
+export async function loadSwingPose3DFromFile(file) {
+  return decodeSwingPose3D(await file.arrayBuffer());
 }

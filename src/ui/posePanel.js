@@ -1,6 +1,8 @@
 /**
- * English: Bottom pose playback bar — play/pause, ±1 frame, scrubber, frame label, stickman X offset.
- * 中文：底部姿势播放条 —— 播放/暂停、±1 帧、滑条定格、帧号文案，以及火柴人相对 GLB 的 X 轴距离。
+ * English: Bottom pose playback bar — play/pause, ±1 frame, scrubber, frame label,
+ * stickman X offset, joint-name labels, and IK angle overlay toggles.
+ * 中文：底部姿势播放条 —— 播放/暂停、±1 帧、滑条定格、帧号文案、
+ * 火柴人 X 轴距离，以及关节名标签 / 逆向运动学角度标记的开关。
  */
 
 /**
@@ -9,6 +11,10 @@
  * @param {object} [options]
  * @param {number} [options.offsetX]
  * @param {(x: number) => void} [options.onOffsetXChange]
+ * @param {boolean} [options.labelsVisible]
+ * @param {(show: boolean) => void} [options.onLabelsVisibleChange]
+ * @param {boolean} [options.anglesVisible]
+ * @param {(show: boolean) => void} [options.onAnglesVisibleChange]
  */
 export function createPosePanel(container, playback, options = {}) {
   const panel = document.createElement('section');
@@ -97,7 +103,58 @@ export function createPosePanel(container, playback, options = {}) {
   });
 
   distWrap.append(distText, distInput);
-  panel.append(playBtn, prevBtn, slider, nextBtn, label, distWrap);
+
+  /**
+   * @param {string} text
+   * @param {string} title
+   * @param {boolean} checked
+   * @param {(show: boolean) => void} [onChange]
+   */
+  function makeToggle(text, title, checked, onChange) {
+    const wrap = document.createElement('label');
+    wrap.className = 'pose-panel__toggle';
+    wrap.title = title;
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.className = 'pose-panel__toggle-input';
+    input.checked = checked;
+    input.setAttribute('aria-label', text);
+    input.addEventListener('change', () => {
+      onChange?.(input.checked);
+    });
+
+    const span = document.createElement('span');
+    span.className = 'pose-panel__toggle-label';
+    span.textContent = text;
+
+    wrap.append(input, span);
+    return wrap;
+  }
+
+  const labelsToggle = makeToggle(
+    '关节名',
+    '显示 / 隐藏火柴人关节点名称',
+    options.labelsVisible !== false,
+    options.onLabelsVisibleChange,
+  );
+  const anglesToggle = makeToggle(
+    '关节角',
+    '显示 / 隐藏逆向运动学解出的关节角度',
+    options.anglesVisible !== false,
+    options.onAnglesVisibleChange,
+  );
+
+  panel.append(
+    playBtn,
+    prevBtn,
+    slider,
+    nextBtn,
+    label,
+    distWrap,
+    labelsToggle,
+    anglesToggle,
+  );
   container.appendChild(panel);
 
   function sync(snap = playback.getSnapshot()) {

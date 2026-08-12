@@ -4,6 +4,9 @@
  *
  * 关节位置来自 poseDriver.getJointPosition（已镜像 / 缩放 / 偏航 / 贴地），
  * 因此火柴人与 GLB 在 Y、Z 上保持一致，只通过 Group 的 X 偏移并排显示。
+ *
+ * 每个关节球上方带一个名字标签（Sprite + Canvas），可用 setLabelVisible 开关。
+ * 关节球与标签按部位分色：同一部位的左右两侧共用色相，靠明暗区分。
  */
 import * as THREE from 'three';
 
@@ -62,8 +65,37 @@ const DEFAULT_OFFSET_X = 1.5;
 const JOINT_RADIUS = 0.022;
 const BODY_LINE_COLOR = 0x7dd3fc;
 const CLUB_LINE_COLOR = 0xf0c14b;
-const BODY_JOINT_COLOR = 0xe2e8f0;
 const CLUB_JOINT_COLOR = 0xff9f43;
+
+/**
+ * 关节配色：每个部位一个色相，left / right 共用色相但取不同明度。
+ * 先按颜色认部位（肩绿、肘红……），再按深浅认左右。
+ * @type {Readonly<Record<string, number>>} 色相角（0-360）
+ */
+const JOINT_HUES = Object.freeze({
+  nose: 52,
+  ear: 275,
+  shoulder: 135,
+  elbow: 0,
+  wrist: 210,
+  hip: 30,
+  knee: 185,
+  ankle: 320,
+});
+
+/** left 取亮档、right 取暗档；无左右之分的关节（nose）取中间档 */
+const SIDE_LIGHTNESS = Object.freeze({ left: 0.7, right: 0.44, center: 0.62 });
+const JOINT_SATURATION = 0.85;
+const FALLBACK_JOINT_COLOR = 0xe2e8f0;
+
+/** 关节名标签：字号与画布高度一起决定清晰度，世界高度决定观感大小 */
+const LABEL_CANVAS_HEIGHT = 64;
+const LABEL_FONT_PX = 34;
+const LABEL_PADDING_PX = 12;
+const LABEL_HEIGHT = 0.045;
+const LABEL_FONT = `bold ${LABEL_FONT_PX}px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif`;
+/** 标签放在关节球上方，避免压住骨架线 */
+const LABEL_GAP = 0.03;
 
 /**
  * @param {THREE.Scene} scene
@@ -88,11 +120,12 @@ export function createStickman(scene, options = {}) {
 
   /** @type {Map<string, THREE.Mesh>} */
   const markers = new Map();
-  for (const name of BODY_JOINTS) {
-    markers.set(name, makeMarker(name, BODY_JOINT_COLOR, jointGeo, root));
-  }
-  for (const name of CLUB_JOINTS) {
-    markers.set(name, makeMarker(name, CLUB_JOINT_COLOR, jointGeo, root));
+  /** @type {Map<string, THREE.Sprite>} */
+  const labels = new Map();
+  for (const name of [...BODY_JOINTS, ...CLUB_JOINTS]) {
+    const color = jointColor(name);
+    markers.set(name, makeMarker(name, color, jointGeo, root));
+    labels.set(name, makeLabel(name, color, root));
   }
 
   const edgeCount = ALL_EDGES.length;
@@ -129,6 +162,7 @@ export function createStickman(scene, options = {}) {
   root.add(lines);
 
   let visible = true;
+  let labelVisible = true;
 
   /**
    * @param {(name: string) => THREE.Vector3 | null} fn
@@ -152,6 +186,7 @@ export function createStickman(scene, options = {}) {
   function update() {
     if (!visible) {
       for (const mesh of markers.values()) mesh.visible = false;
+      for (const sprite of labels.values()) sprite.visible = false;
       lines.visible = false;
       return;
     }
@@ -164,11 +199,21 @@ export function createStickman(scene, options = {}) {
 
     for (const [name, mesh] of markers) {
       const p = pts.get(name);
+      const sprite = labels.get(name);
       if (p) {
         mesh.position.copy(p);
         mesh.visible = true;
+        if (sprite) {
+          sprite.position.set(
+            p.x,
+            p.y + JOINT_RADIUS + LABEL_GAP + LABEL_HEIGHT / 2,
+            p.z,
+          );
+          sprite.visible = labelVisible;
+        }
       } else {
         mesh.visible = false;
+        if (sprite) sprite.visible = false;
       }
     }
 
@@ -206,7 +251,16 @@ export function createStickman(scene, options = {}) {
     visible = show;
     if (!show) {
       for (const mesh of markers.values()) mesh.visible = false;
+      for (const sprite of labels.values()) sprite.visible = false;
       lines.visible = false;
+    }
+  }
+
+  /** @param {boolean} show */
+  function setLabelVisible(show) {
+    labelVisible = show;
+    if (!show) {
+      for (const sprite of labels.values()) sprite.visible = false;
     }
   }
 
@@ -218,7 +272,12 @@ export function createStickman(scene, options = {}) {
     for (const mesh of markers.values()) {
       mesh.material.dispose();
     }
+    for (const sprite of labels.values()) {
+      sprite.material.map?.dispose();
+      sprite.material.dispose();
+    }
     markers.clear();
+    labels.clear();
   }
 
   return {
@@ -227,11 +286,33 @@ export function createStickman(scene, options = {}) {
     setOffsetX,
     getOffsetX,
     setVisible,
+    setLabelVisible,
     setJointGetter,
     isVisible: () => visible,
+    isLabelVisible: () => labelVisible,
     dispose,
     DEFAULT_OFFSET_X,
   };
+}
+
+/**
+ * 关节名 → 颜色。球杆点自成一色，与人体关节区分开。
+ * @param {string} name
+ * @returns {number}
+ */
+function jointColor(name) {
+  if (CLUB_JOINTS.includes(name)) return CLUB_JOINT_COLOR;
+
+  const matched = /^(left|right)_(.+)$/.exec(name);
+  const side = matched ? matched[1] : 'center';
+  const part = matched ? matched[2] : name;
+
+  const hue = JOINT_HUES[part];
+  if (hue === undefined) return FALLBACK_JOINT_COLOR;
+
+  return new THREE.Color()
+    .setHSL(hue / 360, JOINT_SATURATION, SIDE_LIGHTNESS[side])
+    .getHex();
 }
 
 /**
@@ -253,4 +334,55 @@ function makeMarker(name, color, geo, parent) {
   mesh.visible = false;
   parent.add(mesh);
   return mesh;
+}
+
+/**
+ * 关节名标签：名字在整段动画里不变，所以画布只画一次。
+ * @param {string} name
+ * @param {number} color
+ * @param {THREE.Group} parent
+ */
+function makeLabel(name, color, parent) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.height = LABEL_CANVAS_HEIGHT;
+  canvas.width = LABEL_CANVAS_HEIGHT * 4;
+  if (ctx) {
+    ctx.font = LABEL_FONT;
+    canvas.width = Math.ceil(ctx.measureText(name).width) + LABEL_PADDING_PX * 2;
+  }
+
+  if (ctx) {
+    // 改动 canvas 尺寸会重置 2d 上下文状态，字体要重新设置
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = 'rgba(13, 17, 23, 0.9)';
+    ctx.strokeText(name, canvas.width / 2, canvas.height / 2);
+    ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.fillText(name, canvas.width / 2, canvas.height / 2);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false,
+      transparent: true,
+    }),
+  );
+  sprite.name = `StickmanJointLabel:${name}`;
+  sprite.renderOrder = 999;
+  sprite.scale.set(
+    (LABEL_HEIGHT * canvas.width) / canvas.height,
+    LABEL_HEIGHT,
+    1,
+  );
+  sprite.visible = false;
+  parent.add(sprite);
+  return sprite;
 }

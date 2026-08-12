@@ -8,7 +8,8 @@
  * - src/features/animationController.js  → 功能：切换 / 暂停 / 调速动画
  * - src/ui/animationPanel.js             → UI：动画控制面板
  * - src/ui/bonePanel.js                  → UI：骨骼名称列表
- * - src/data/loadSwingPose3D.js          → 数据：解码 swing_pose3d.pb
+ * - src/data/loadSwingPose3D.js          → 数据：解码 .pb（本地文件 / 示例文件）
+ * - src/ui/filePanel.js                  → UI：pb 文件选择条
  * - src/ui/jsonTreePanel.js              → UI：可折叠 JSON 树
  * - src/ui/jointPanel.js                 → UI：关节列表（含骨骼映射）
  * - src/features/jointBoneMap.js         → 功能：关节↔骨骼映射
@@ -23,7 +24,7 @@
  * - src/features/ikSolver.js             → 功能：逆向运动学，pb 关节位置 → 关节角度
  * - src/features/angleOverlay.js         → 功能：关节角度以弧线 + 度数画在火柴人上
  * - src/features/posePlayback.js         → 功能：姿势帧播放 / 循环 / scrub
- * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号 + 距离
+ * - src/ui/posePanel.js                  → UI：播放按钮 + 滑条 + 帧号 + 距离 + 关节名/角度开关
  *
  * 【初学者学习路线】请按下面「第 1 步 → 第 9 步」顺序阅读本文件。
  * Three.js 最核心的思路只有一句话：
@@ -32,7 +33,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import '../style.css';
-import { loadSwingPose3D } from './data/loadSwingPose3D.js';
+import {
+  loadSwingPose3D,
+  loadSwingPose3DFromFile,
+  SAMPLE_PB_NAME,
+} from './data/loadSwingPose3D.js';
 import { createAngleOverlay } from './features/angleOverlay.js';
 import { createAnimationController } from './features/animationController.js';
 import { createBoneHighlighter } from './features/boneHighlighter.js';
@@ -40,8 +45,8 @@ import { createClub } from './features/club.js';
 import { createIKSolver, solvePoseAngles } from './features/ikSolver.js';
 import { createJointBoneMap } from './features/jointBoneMap.js';
 import {
-    loadMappingFromStorage,
-    saveMappingToStorage,
+  loadMappingFromStorage,
+  saveMappingToStorage,
 } from './features/jointBoneMapStorage.js';
 import { createPoseDriver } from './features/poseDriver.js';
 import { createPosePlayback } from './features/posePlayback.js';
@@ -49,6 +54,7 @@ import { createStickman } from './features/stickman.js';
 import { loadXbot, restoreBindPose } from './models/loadXbot.js';
 import { createAnimationPanel } from './ui/animationPanel.js';
 import { collectBones, createBonePanel } from './ui/bonePanel.js';
+import { createFilePanel } from './ui/filePanel.js';
 import { createJointPanel } from './ui/jointPanel.js';
 import { createJsonTreePanel } from './ui/jsonTreePanel.js';
 import { createPosePanel } from './ui/posePanel.js';
@@ -175,6 +181,14 @@ let ikSolver = null;
 let stickmanAngleOverlay = null;
 /** @type {ReturnType<typeof createAngleOverlay> | null} */
 let glbAngleOverlay = null;
+/** @type {ReturnType<typeof createJsonTreePanel> | null} */
+let jsonPanel = null;
+/** @type {ReturnType<typeof createPosePanel> | null} */
+let posePanel = null;
+/** @type {ReturnType<typeof createBonePanel> | null} */
+let bonePanel = null;
+/** @type {ReturnType<typeof createJointPanel> | null} */
+let jointPanel = null;
 /** pb 姿势驱动开启时，跳过 mixer 更新以免覆盖骨骼 */
 let poseDriveActive = false;
 
@@ -201,195 +215,285 @@ const xbotReady = loadXbot(scene, {
   return { model, bones, bindPose };
 });
 
-const poseReady = loadSwingPose3D().then(({ data, joints }) => {
+xbotReady.catch((error) => {
+  console.error('模型加载失败：', error);
+  if (loading.isConnected) {
+    loading.textContent = '加载失败，请检查控制台。';
+    loading.classList.add('error');
+  }
+});
+
+// ============================================================
+// 第 8.5 步：pb 文件由用户选择（不再默认加载）
+// 选择后 → 解码 → 重建姿势相关面板与 3D 对象；可随时换文件重来。
+// ============================================================
+const filePanel = createFilePanel(app, {
+  onPickFile(file) {
+    loadPose(file.name, () => loadSwingPose3DFromFile(file));
+  },
+  onPickSample() {
+    loadPose(SAMPLE_PB_NAME, () => loadSwingPose3D());
+  },
+});
+
+/** 每次选择自增，用于忽略过期请求的返回结果 */
+let poseRequestId = 0;
+
+/**
+ * @param {string} label - 展示用文件名
+ * @param {() => Promise<{ data: object, joints: string[] }>} load
+ */
+async function loadPose(label, load) {
+  const requestId = ++poseRequestId;
+  filePanel.setBusy(true);
+  filePanel.setStatus(`正在解析 ${label}…`, 'loading');
+
+  try {
+    const xbot = await xbotReady;
+    const { data, joints } = await load();
+    if (requestId !== poseRequestId) return; // 已有更新的选择，丢弃本次结果
+
+    teardownPose();
+    setupPose(xbot, { data, joints });
+
+    const frameCount = data.frames?.length ?? 0;
+    filePanel.setStatus(
+      `${label} · ${frameCount} 帧 · ${joints.length} 关节`,
+      'ok',
+    );
+  } catch (error) {
+    console.error(`加载 ${label} 失败：`, error);
+    if (requestId === poseRequestId) {
+      filePanel.setStatus(`${label} 加载失败：${error.message}`, 'error');
+    }
+  } finally {
+    if (requestId === poseRequestId) filePanel.setBusy(false);
+  }
+}
+
+/** 清掉上一份 pb 带来的面板与 3D 对象，便于切换文件 */
+function teardownPose() {
+  posePlayback?.pause();
+  poseDriveActive = false;
+
+  stickmanAngleOverlay?.dispose();
+  glbAngleOverlay?.dispose();
+  club?.dispose();
+  stickman?.dispose();
+  boneHighlighter?.dispose();
+
+  jsonPanel?.element.remove();
+  posePanel?.element.remove();
+  bonePanel?.element.remove();
+  jointPanel?.element.remove();
+
+  stickmanAngleOverlay = null;
+  glbAngleOverlay = null;
+  club = null;
+  stickman = null;
+  boneHighlighter = null;
+  poseDriver = null;
+  posePlayback = null;
+  ikSolver = null;
+  jointBoneMap = null;
+  jsonPanel = null;
+  posePanel = null;
+  bonePanel = null;
+  jointPanel = null;
+}
+
+/**
+ * 模型骨骼 + pb 关节都就绪后：映射联动 + pb 姿势驱动
+ * @param {{ model: import('three').Object3D, bones: import('three').Bone[], bindPose: unknown }} xbot
+ * @param {{ data: object, joints: string[] }} pose
+ */
+function setupPose({ model, bones, bindPose }, { data, joints }) {
   const frameCount = data.frames?.length ?? 0;
-  createJsonTreePanel(app, {
+  jsonPanel = createJsonTreePanel(app, {
     title: `SwingPose3D（${frameCount} frames · ${joints.length} joints）`,
     data,
     defaultExpandDepth: 1,
   });
   console.log('SwingPose3D joints：', joints);
   console.log('SwingPose3D 已加载：', data);
-  return { data, joints };
-});
 
-// 模型骨骼 + pb 关节都就绪后：映射联动 + pb 姿势驱动
-Promise.all([xbotReady, poseReady])
-  .then(([{ model, bones, bindPose }, { data, joints }]) => {
-    const boneNames = bones.map((bone) => bone.name || '(unnamed)');
-    const savedMap = loadMappingFromStorage();
-    jointBoneMap = createJointBoneMap({
-      joints,
-      boneNames,
-      savedMap,
-    });
-    boneHighlighter = createBoneHighlighter(scene, bones);
+  const boneNames = bones.map((bone) => bone.name || '(unnamed)');
+  const savedMap = loadMappingFromStorage();
+  jointBoneMap = createJointBoneMap({
+    joints,
+    boneNames,
+    savedMap,
+  });
+  boneHighlighter = createBoneHighlighter(scene, bones);
 
-    // pb 驱动：停掉内置 GLB 动画，避免 mixer 覆盖骨骼
-    if (animController) {
-      animController.switchBaseAction('None', 0);
-      for (const name of animController.additiveNames) {
-        animController.setAdditiveWeight(name, 0);
-      }
-      animController.setPaused(true);
+  // pb 驱动：停掉内置 GLB 动画，避免 mixer 覆盖骨骼
+  if (animController) {
+    animController.switchBaseAction('None', 0);
+    for (const name of animController.additiveNames) {
+      animController.setAdditiveWeight(name, 0);
     }
-    // 恢复加载时的 bind（勿用 skeleton.pose：Armature 缩放会导致骨骼崩溃）
-    restoreBindPose(bindPose, model);
+    animController.setPaused(true);
+  }
+  // 恢复加载时的 bind（勿用 skeleton.pose：Armature 缩放会导致骨骼崩溃）
+  restoreBindPose(bindPose, model);
 
-    poseDriver = createPoseDriver({
-      model,
-      bones,
-      data,
-      mapping: jointBoneMap,
-    });
-    const jointPos = (name) => poseDriver?.getJointPosition(name) ?? null;
-    club = createClub(scene, { getJointPosition: jointPos });
-    stickman = createStickman(scene, { getJointPosition: jointPos });
-    posePlayback = createPosePlayback({ data, driver: poseDriver });
+  poseDriver = createPoseDriver({
+    model,
+    bones,
+    data,
+    mapping: jointBoneMap,
+  });
+  const jointPos = (name) => poseDriver?.getJointPosition(name) ?? null;
+  club = createClub(scene, { getJointPosition: jointPos });
+  stickman = createStickman(scene, { getJointPosition: jointPos });
+  posePlayback = createPosePlayback({ data, driver: poseDriver });
 
-    // 逆向运动学：整段序列一次性解算好角度；实时弧线则按当前帧的模型空间坐标现算，
-    // 这样弧的顶点与火柴人骨架严格重合（角度本身不受刚体变换与缩放影响）。
-    ikSolver = createIKSolver({ data });
-    stickmanAngleOverlay = createAngleOverlay(stickman.root, {
-      solve: () => solvePoseAngles(jointPos),
-      name: 'StickmanAngleOverlay',
-    });
-    glbAngleOverlay = createAngleOverlay(scene, {
-      solve: () => poseDriver.getModelAngleGeometry(),
-      name: 'GlbAngleOverlay',
-      radius: 0.085,
-    });
+  // 逆向运动学：整段序列一次性解算好角度；实时弧线则按当前帧的模型空间坐标现算，
+  // 这样弧的顶点与火柴人骨架严格重合（角度本身不受刚体变换与缩放影响）。
+  ikSolver = createIKSolver({ data });
+  stickmanAngleOverlay = createAngleOverlay(stickman.root, {
+    solve: () => solvePoseAngles(jointPos),
+    name: 'StickmanAngleOverlay',
+  });
+  glbAngleOverlay = createAngleOverlay(scene, {
+    solve: () => poseDriver.getModelAngleGeometry(),
+    name: 'GlbAngleOverlay',
+    radius: 0.085,
+  });
 
-    club.update();
-    stickman.update();
-    stickmanAngleOverlay.update();
-    glbAngleOverlay.update();
-    createPosePanel(app, posePlayback, {
-      offsetX: stickman.getOffsetX(),
-      onOffsetXChange(x) {
-        stickman?.setOffsetX(x);
-      },
-    });
-    poseDriveActive = true;
-
-    /** @type {ReturnType<typeof createBonePanel> | null} */
-    let bonePanel = null;
-    /** @type {ReturnType<typeof createJointPanel> | null} */
-    let jointPanel = null;
-    /** @type {string | null} */
-    let activeJoint = null;
-    /** @type {string | null} */
-    let activeBone = null;
-
-    /** @param {{ joint: string | null, bone: string | null }} selection */
-    function focusPair({ joint, bone }) {
-      activeJoint = joint;
-      activeBone = bone;
-      jointPanel?.setActive(joint);
-      bonePanel?.setActive(bone);
-      if (bone) {
-        boneHighlighter?.setActive(bone);
-        bonePanel?.setEyeVisible(bone, true);
+  club.update();
+  stickman.update();
+  stickmanAngleOverlay.update();
+  glbAngleOverlay.update();
+  posePanel = createPosePanel(app, posePlayback, {
+    offsetX: stickman.getOffsetX(),
+    onOffsetXChange(x) {
+      stickman?.setOffsetX(x);
+    },
+    labelsVisible: stickman.isLabelVisible(),
+    onLabelsVisibleChange(show) {
+      stickman?.setLabelVisible(show);
+      if (show) stickman?.update();
+    },
+    anglesVisible: stickmanAngleOverlay.isVisible(),
+    onAnglesVisibleChange(show) {
+      stickmanAngleOverlay?.setVisible(show);
+      glbAngleOverlay?.setVisible(show);
+      if (show) {
+        stickmanAngleOverlay?.update();
+        glbAngleOverlay?.update();
       }
-    }
+    },
+  });
+  poseDriveActive = true;
 
-    /** 再次点击同一项时取消高亮 */
-    function unfocusBone(boneName) {
-      if (boneName) {
-        boneHighlighter?.setVisible(boneName, false);
-        bonePanel?.setEyeVisible(boneName, false);
+  /** @type {string | null} */
+  let activeJoint = null;
+  /** @type {string | null} */
+  let activeBone = null;
+
+  /** @param {{ joint: string | null, bone: string | null }} selection */
+  function focusPair({ joint, bone }) {
+    activeJoint = joint;
+    activeBone = bone;
+    jointPanel?.setActive(joint);
+    bonePanel?.setActive(bone);
+    if (bone) {
+      boneHighlighter?.setActive(bone);
+      bonePanel?.setEyeVisible(bone, true);
+    }
+  }
+
+  /** 再次点击同一项时取消高亮 */
+  function unfocusBone(boneName) {
+    if (boneName) {
+      boneHighlighter?.setVisible(boneName, false);
+      bonePanel?.setEyeVisible(boneName, false);
+    }
+    if (boneHighlighter?.getActive() === boneName) {
+      boneHighlighter?.setActive(null);
+    }
+    activeJoint = null;
+    activeBone = null;
+    bonePanel?.setActive(null);
+    jointPanel?.setActive(null);
+  }
+
+  function syncLinkedHighlights(snapshot = jointBoneMap.getSnapshot()) {
+    jointPanel?.setLinked(snapshot.paired.map((pair) => pair.joint));
+    bonePanel?.setLinked(
+      snapshot.paired.map((pair) => pair.bone).filter(Boolean),
+    );
+    bonePanel?.setMappedJoints(snapshot.paired);
+    // 每次变更自动写成 JSON 存到 localStorage，刷新后直接恢复
+    saveMappingToStorage(snapshot.map);
+  }
+
+  bonePanel = createBonePanel(app, bones, {
+    isVisible: (boneName) => boneHighlighter?.isVisible(boneName) ?? false,
+    onSelect(boneName) {
+      if (activeBone === boneName && boneHighlighter?.isVisible(boneName)) {
+        unfocusBone(boneName);
+        return;
       }
-      if (boneHighlighter?.getActive() === boneName) {
-        boneHighlighter?.setActive(null);
-      }
-      activeJoint = null;
-      activeBone = null;
-      bonePanel?.setActive(null);
-      jointPanel?.setActive(null);
-    }
-
-    function syncLinkedHighlights(snapshot = jointBoneMap.getSnapshot()) {
-      jointPanel?.setLinked(snapshot.paired.map((pair) => pair.joint));
-      bonePanel?.setLinked(
-        snapshot.paired.map((pair) => pair.bone).filter(Boolean),
-      );
-      bonePanel?.setMappedJoints(snapshot.paired);
-      // 每次变更自动写成 JSON 存到 localStorage，刷新后直接恢复
-      saveMappingToStorage(snapshot.map);
-    }
-
-    bonePanel = createBonePanel(app, bones, {
-      isVisible: (boneName) => boneHighlighter?.isVisible(boneName) ?? false,
-      onSelect(boneName) {
-        if (activeBone === boneName && boneHighlighter?.isVisible(boneName)) {
-          unfocusBone(boneName);
-          return;
-        }
+      const joint = jointBoneMap.getJointForBone(boneName);
+      focusPair({ joint, bone: boneName });
+    },
+    onToggleVisible(boneName, visible) {
+      boneHighlighter?.setVisible(boneName, visible);
+      if (visible) {
         const joint = jointBoneMap.getJointForBone(boneName);
         focusPair({ joint, bone: boneName });
-      },
-      onToggleVisible(boneName, visible) {
-        boneHighlighter?.setVisible(boneName, visible);
-        if (visible) {
-          const joint = jointBoneMap.getJointForBone(boneName);
-          focusPair({ joint, bone: boneName });
-        } else if (activeBone === boneName) {
-          activeJoint = null;
-          activeBone = null;
-          boneHighlighter?.setActive(null);
-          bonePanel?.setActive(null);
-          jointPanel?.setActive(null);
-        }
-      },
-      onClearHighlights() {
-        boneHighlighter?.clearAll();
-        bonePanel?.clearAllEyes();
+      } else if (activeBone === boneName) {
         activeJoint = null;
         activeBone = null;
+        boneHighlighter?.setActive(null);
+        bonePanel?.setActive(null);
         jointPanel?.setActive(null);
-      },
-    });
-
-    jointPanel = createJointPanel(app, joints, {
-      mapping: jointBoneMap,
-      onSelect(jointName) {
-        const bone = jointBoneMap.getBoneForJoint(jointName) ?? null;
-        if (activeJoint === jointName) {
-          unfocusBone(bone);
-          return;
-        }
-        focusPair({ joint: jointName, bone });
-      },
-    });
-
-    jointBoneMap.subscribe((snapshot) => {
-      syncLinkedHighlights(snapshot);
-      poseDriver?.onMappingChanged();
-      if (posePlayback) {
-        poseDriver?.applyFrame(posePlayback.getFrameIndex());
       }
-    });
-    syncLinkedHighlights();
+    },
+    onClearHighlights() {
+      boneHighlighter?.clearAll();
+      bonePanel?.clearAllEyes();
+      activeJoint = null;
+      activeBone = null;
+      jointPanel?.setActive(null);
+    },
+  });
 
-    console.log(
-      savedMap ? '已从本地 JSON 恢复关节↔骨骼映射：' : '关节↔骨骼映射（默认）：',
-      jointBoneMap.getSnapshot(),
-    );
-    console.log('PB 姿势驱动已启用，address 帧：', poseDriver.addressIndex);
-    console.log('PB 数据清洗结果：', poseDriver.sanitizeReport);
-    console.log('IK 关节角度定义：', ikSolver.definitions);
-    console.log(
-      'IK 关节角度（address 帧，单位：度）：',
-      ikSolver.getFrameAngles(poseDriver.addressIndex),
-    );
-  })
-  .catch((error) => {
-    console.error('初始化失败：', error);
-    if (loading.isConnected) {
-      loading.textContent = '加载失败，请检查控制台。';
-      loading.classList.add('error');
+  jointPanel = createJointPanel(app, joints, {
+    mapping: jointBoneMap,
+    onSelect(jointName) {
+      const bone = jointBoneMap.getBoneForJoint(jointName) ?? null;
+      if (activeJoint === jointName) {
+        unfocusBone(bone);
+        return;
+      }
+      focusPair({ joint: jointName, bone });
+    },
+  });
+
+  jointBoneMap.subscribe((snapshot) => {
+    syncLinkedHighlights(snapshot);
+    poseDriver?.onMappingChanged();
+    if (posePlayback) {
+      poseDriver?.applyFrame(posePlayback.getFrameIndex());
     }
   });
+  syncLinkedHighlights();
+
+  console.log(
+    savedMap ? '已从本地 JSON 恢复关节↔骨骼映射：' : '关节↔骨骼映射（默认）：',
+    jointBoneMap.getSnapshot(),
+  );
+  console.log('PB 姿势驱动已启用，address 帧：', poseDriver.addressIndex);
+  console.log('PB 数据清洗结果：', poseDriver.sanitizeReport);
+  console.log('IK 关节角度定义：', ikSolver.definitions);
+  console.log(
+    'IK 关节角度（address 帧，单位：度）：',
+    ikSolver.getFrameAngles(poseDriver.addressIndex),
+  );
+}
 
 // ============================================================
 // 第 9 步：渲染循环 + 窗口自适应

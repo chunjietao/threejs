@@ -60,6 +60,86 @@ canvas {
   pointer-events: none;
 }
 
+/* ---------- pb 文件选择条 ---------- */
+.file-panel {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 40px);
+  padding: 10px 14px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 999px;
+  background: rgb(13 17 23 / 82%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(14px);
+}
+
+.file-panel__input {
+  display: none;
+}
+
+.file-panel__btn {
+  appearance: none;
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+  color: #f4f7fb;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.file-panel__btn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.file-panel__btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.file-panel__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.file-panel__btn--primary {
+  border-color: rgb(106 168 255 / 70%);
+  background: rgb(106 168 255 / 18%);
+}
+
+.file-panel__status {
+  overflow: hidden;
+  max-width: 40vw;
+  color: rgb(244 247 251 / 62%);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.file-panel__status.is-ok {
+  color: rgb(140 220 170 / 90%);
+}
+
+.file-panel__status.is-error {
+  color: #ff8f8f;
+}
+
+.file-panel__status.is-loading {
+  color: rgb(106 168 255 / 90%);
+}
+
 /* ---------- 动画控制面板 ---------- */
 .anim-panel {
   position: fixed;
@@ -169,8 +249,9 @@ canvas {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: min(580px, calc(100vw - 280px));
+  width: min(720px, calc(100vw - 280px));
   padding: 10px 14px;
+  flex-wrap: wrap;
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 14px;
   background: rgb(13 17 23 / 82%);
@@ -282,6 +363,31 @@ canvas {
 
 .pose-panel__distance-input:focus {
   border-color: rgb(106 168 255 / 70%);
+}
+
+.pose-panel__toggle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: rgb(244 247 251 / 75%);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pose-panel__toggle-input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #6aa8ff;
+  cursor: pointer;
+}
+
+.pose-panel__toggle-label {
+  line-height: 1;
 }
 
 /* ---------- 骨骼列表面板 ---------- */
@@ -747,13 +853,14 @@ canvas {
 /* ---------- SwingPose3D 可折叠 JSON 面板 ---------- */
 .json-panel {
   position: fixed;
-  top: 20px;
+  /* 顶部让出 pb 文件选择条的高度 */
+  top: 84px;
   left: 20px;
   z-index: 2;
   display: flex;
   flex-direction: column;
   width: min(360px, calc(100vw - 40px));
-  max-height: min(70vh, calc(100vh - 220px));
+  max-height: min(70vh, calc(100vh - 284px));
   padding: 12px;
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 16px;
@@ -924,8 +1031,21 @@ canvas {
     display: none;
   }
 
-  .json-panel {
+  .file-panel {
     top: 12px;
+    left: 12px;
+    right: 12px;
+    flex-wrap: wrap;
+    max-width: none;
+    border-radius: 16px;
+  }
+
+  .file-panel__status {
+    max-width: 100%;
+  }
+
+  .json-panel {
+    top: 76px;
     left: 12px;
     right: 12px;
     width: auto;
